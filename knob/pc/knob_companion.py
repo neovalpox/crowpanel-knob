@@ -36,6 +36,7 @@ import camera
 import dashboard
 import hue
 import media
+import netspeed
 import permissions
 import server
 import tray
@@ -337,7 +338,7 @@ def app_sessions(exe_name):
 
 # ---------------------------------------------------------------- Widgets
 
-TILE_APP, TILE_VOL, TILE_DASH, TILE_HUE = range(4)  # ordre des tuiles du firmware
+TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_HUE = range(5)  # ordre des tuiles du firmware
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -414,6 +415,8 @@ class Companion:
         self.last_clock = 0
         self.last_hue = 0
         self.last_perm = 0
+        self.net = netspeed.NetSpeed()
+        self.last_net = 0
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
@@ -891,8 +894,8 @@ class Companion:
                 else:
                     self.hue.next_group()
                 self.push_hue()
-            elif self.tile == TILE_DASH:
-                pass  # rien à piloter sur l'horloge
+            elif self.tile in (TILE_DASH, TILE_NET):
+                pass  # tuiles d'affichage : rien à piloter
             elif msg[0] == "R":
                 self.on_rotate(int(msg[1:]))
             elif msg == "C" and self.app:
@@ -941,6 +944,9 @@ class Companion:
             self.guarded(self.push_sleep)
             self.guarded(self.check_alerts)
         self.guarded(self.push_camera)
+        if now - self.last_net > 0.5:
+            self.last_net = now
+            self.guarded(lambda: self.send(self.net.message()))
         if now - self.last_perm > 0.2:
             self.last_perm = now
             self.guarded(self.push_permission)

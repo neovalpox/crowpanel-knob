@@ -14,7 +14,7 @@
 #define NOTIFY_MS 8000
 #define WAKE_MS 15000
 #define BACKLIGHT_MAX 220
-#define TILE_COUNT 4
+#define TILE_COUNT 5
 
 static lv_obj_t *tv, *tiles[TILE_COUNT];
 static lv_obj_t *dots[TILE_COUNT], *usbIcon;
@@ -41,6 +41,14 @@ static lv_obj_t *secArc, *timeLabel, *dateLabel, *tempLabel, *degRing, *weatherD
 static long clockBase = -1;  // secondes depuis minuit au moment clockBaseMs
 static unsigned long clockBaseMs = 0;
 static int shownMinute = -1;
+
+// Réseau
+#define COL_DOWN 0x22D3EE
+#define COL_UP 0xF472B6
+#define NET_POINTS 48
+static lv_obj_t *netDownArc, *netUpArc, *netDown, *netUp, *netChart;
+static lv_chart_series_t *netDownSeries, *netUpSeries;
+static int netDownPermille = 0;
 
 // Hue
 static lv_obj_t *hueArc, *hueSym, *hueName, *hueValue, *hueHint;
@@ -344,6 +352,42 @@ static void buildDashTile(lv_obj_t *t) {
   limitWidth(statusLabel, 160);
 }
 
+static void buildNetTile(lv_obj_t *t) {
+  // Deux anneaux concentriques : descendant à l'extérieur, montant à l'intérieur.
+  netDownArc = makeArc(t, 10);
+  lv_obj_set_style_arc_color(netDownArc, lv_color_hex(COL_DOWN), LV_PART_INDICATOR);
+  netUpArc = makeArc(t, 10);
+  lv_obj_set_size(netUpArc, ARC_SIZE - 28, ARC_SIZE - 28);
+  lv_obj_center(netUpArc);
+  lv_obj_set_style_arc_color(netUpArc, lv_color_hex(COL_UP), LV_PART_INDICATOR);
+
+  lv_obj_t *title = makeLabel(t, &lv_font_montserrat_14, COL_DIM, -62);
+  lv_obj_set_style_text_letter_space(title, 4, 0);
+  lv_label_set_text(title, "RESEAU");
+  netDown = makeLabel(t, &lv_font_montserrat_28, COL_DOWN, -30);
+  lv_label_set_text(netDown, LV_SYMBOL_DOWN " --");
+  netUp = makeLabel(t, &lv_font_montserrat_20, COL_UP, 2);
+  lv_label_set_text(netUp, LV_SYMBOL_UP " --");
+
+  // Historique : courbes sans points ni grille.
+  netChart = lv_chart_create(t);
+  lv_obj_set_size(netChart, 132, 40);
+  lv_obj_align(netChart, LV_ALIGN_CENTER, 0, 46);
+  lv_chart_set_type(netChart, LV_CHART_TYPE_LINE);
+  lv_chart_set_point_count(netChart, NET_POINTS);
+  lv_chart_set_range(netChart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+  lv_chart_set_div_line_count(netChart, 0, 0);
+  lv_chart_set_update_mode(netChart, LV_CHART_UPDATE_MODE_SHIFT);
+  makeTransparent(netChart);
+  lv_obj_clear_flag(netChart, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_size(netChart, 0, LV_PART_INDICATOR);
+  lv_obj_set_style_line_width(netChart, 2, LV_PART_ITEMS);
+  netDownSeries = lv_chart_add_series(netChart, lv_color_hex(COL_DOWN), LV_CHART_AXIS_PRIMARY_Y);
+  netUpSeries = lv_chart_add_series(netChart, lv_color_hex(COL_UP), LV_CHART_AXIS_PRIMARY_Y);
+  lv_chart_set_all_value(netChart, netDownSeries, 0);
+  lv_chart_set_all_value(netChart, netUpSeries, 0);
+}
+
 static void buildHueTile(lv_obj_t *t) {
   hueArc = makeArc(t, 16);
   lv_obj_set_style_arc_color(hueArc, lv_color_hex(COL_HUE), LV_PART_INDICATOR);
@@ -430,6 +474,7 @@ void uiBegin() {
   buildAppTile(tiles[TILE_APP]);
   buildVolumeTile(tiles[TILE_VOL]);
   buildDashTile(tiles[TILE_DASH]);
+  buildNetTile(tiles[TILE_NET]);
   buildHueTile(tiles[TILE_HUE]);
 
   // --- Éléments fixes : indicateur de page, état USB
@@ -716,6 +761,19 @@ void uiHideCamera() {
   lv_obj_clear_flag(appContent, LV_OBJ_FLAG_HIDDEN);
 }
 
+// ---------- Réseau
+
+void uiSetNet(int downPermille, const char *downText, int upPermille, const char *upText) {
+  netDownPermille = constrain(downPermille, 0, 1000);
+  upPermille = constrain(upPermille, 0, 1000);
+  lv_label_set_text_fmt(netDown, LV_SYMBOL_DOWN " %s", downText);
+  lv_label_set_text_fmt(netUp, LV_SYMBOL_UP " %s", upText);
+  animArcTo(netDownArc, 270 * netDownPermille / 1000);
+  animArcTo(netUpArc, 270 * upPermille / 1000);
+  lv_chart_set_next_value(netChart, netDownSeries, netDownPermille);
+  lv_chart_set_next_value(netChart, netUpSeries, upPermille);
+}
+
 // ---------- Hue
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint) {
@@ -781,6 +839,10 @@ static void tickLeds() {
     color = masterMuted ? COL_MUTE : COL_MASTER;
     count = masterMuted ? 5 : (masterVolume * 5 + 99) / 100;
     bright = 70 + ledFlash / 3;
+  } else if (t == TILE_NET) {
+    color = COL_DOWN;
+    count = max(1, (netDownPermille * 5 + 999) / 1000);
+    bright = 50 + ledFlash / 3;
   } else if (t == TILE_HUE) {
     color = hueColor;
     count = (huePermille * 5 + 999) / 1000;

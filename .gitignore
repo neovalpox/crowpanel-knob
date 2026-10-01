@@ -18,3 +18,4 @@ mount/ref/
 mount/tools/
 knob/pc/hue.json
 .playwright-mcp/
+mount_pixel/ref/

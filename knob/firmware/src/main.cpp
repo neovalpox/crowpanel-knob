@@ -16,6 +16,7 @@
 //                  "Z<rétroéclairage> <leds 0|1> <horloge 0|1>"  veille
 //                  "J<w> <h> <len>" + octets RGB565 LE  image caméra ; "j" la masque
 //                  "Y<nom>\t<pour mille>\t<valeur>\t<rrggbb>\t<indice>"  tuile Hue
+//                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
 //                  "X<id>\t<titre>\t<détail>\t<LIB,rrggbb|...>"  question à choix ; "x<id>" la ferme
 //   module -> PC : "H" (bonjour), "Q<tuile>", "R<crans>", "C" (clic), "L" (appui long),
 //                  "x<id> <index>" (réponse, -1 = rendre la main au terminal)
@@ -165,6 +166,9 @@ static void handleLine(char *s) {
       if (sscanf(s, "Z%d %d %d", &bl, &leds, &clock) == 3) uiSetSleep(bl, leds != 0, clock != 0);
       break;
     }
+    case 'B':
+      if (splitFields(s + 1, f, 4) == 4) uiSetNet(atoi(f[0]), f[1], atoi(f[2]), f[3]);
+      break;
     case 'X':
       if (splitFields(s + 1, f, 4) == 4) uiAsk(atoi(f[0]), f[1], f[2], f[3]);
       break;

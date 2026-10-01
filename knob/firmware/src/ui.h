@@ -1,5 +1,5 @@
 // Interface LVGL. Tuiles, de gauche à droite :
-//   application (couleur/icône de la fenêtre active) | volume | tableau de bord | Hue
+//   application (couleur/icône de la fenêtre active) | volume | tableau de bord | réseau | Hue
 // On glisse vers la gauche pour passer à la tuile suivante.
 #pragma once
 #include <lvgl.h>
@@ -8,7 +8,7 @@
 // MEDIA : pochette + titre/artiste + avancement du morceau.
 // PROGRESS : jauge pilotée par le PC (impression 3D, statut Claude...).
 enum AppMode { MODE_MASTER, MODE_APPVOL, MODE_SCROLL, MODE_MEDIA, MODE_PROGRESS };
-enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_HUE };
+enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_HUE };
 
 void uiBegin();
 void uiTick();  // LEDs, horloge, veille, alertes, retour auto sur la tuile application
@@ -51,6 +51,9 @@ int uiAskId();
 int uiAskIndex();
 void uiAskRotate(int steps);
 void uiAskClose();
+
+// Réseau : jauges (pour mille, échelle log calculée par le PC) + débits formatés.
+void uiSetNet(int downPermille, const char *downText, int upPermille, const char *upText);
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
 
