@@ -1,5 +1,6 @@
-// Interface LVGL : tuile « application » (couleur/icône de la fenêtre active)
-// et tuile « volume » à droite (on glisse vers la gauche pour l'afficher).
+// Interface LVGL. Tuiles, de gauche à droite :
+//   application (couleur/icône de la fenêtre active) | volume | tableau de bord | Hue
+// On glisse vers la gauche pour passer à la tuile suivante.
 #pragma once
 #include <lvgl.h>
 
@@ -7,9 +8,10 @@
 // MEDIA : pochette + titre/artiste + avancement du morceau.
 // PROGRESS : jauge pilotée par le PC (impression 3D, statut Claude...).
 enum AppMode { MODE_MASTER, MODE_APPVOL, MODE_SCROLL, MODE_MEDIA, MODE_PROGRESS };
+enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_HUE };
 
 void uiBegin();
-void uiTick();  // LEDs, retour auto sur la tuile application
+void uiTick();  // LEDs, horloge, veille, alertes, retour auto sur la tuile application
 
 void uiSetSynced(bool synced);
 void uiSetMaster(int volume, bool muted);
@@ -22,6 +24,28 @@ void uiSetColor(uint32_t rgb);
 void uiUpdateIcon(const lv_img_dsc_t *icon);  // sans animation d'entrée (ex. nouvelle pochette)
 void uiFlash(const char *text);               // symbole géant qui apparaît puis s'efface
 
+// Alerte plein écran (bulle + LEDs qui clignotent), fermée par clic/tap ou après 8 s.
+void uiNotify(const char *symbol, const char *title, const char *subtitle, uint32_t rgb);
+bool uiNotifyVisible();
+void uiNotifyDismiss();
+
+// Tableau de bord
+void uiSetClock(long secondsOfDay, const char *date);
+void uiSetWeather(const char *temp, const char *desc);
+void uiSetEvent(const char *text);
+void uiSetStatus(const char *text, uint32_t rgb);
+
+// Veille : luminosité cible, LEDs autorisées, bascule sur l'horloge.
+void uiSetSleep(uint8_t backlight, bool leds, bool showClock);
+void uiWake();  // interaction locale : plein écran quelques secondes
+
+// Caméra (image RGB565 affichée en rond dans l'anneau de la tuile application)
+void uiShowCamera(const lv_img_dsc_t *frame);
+void uiHideCamera();
+
+void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
+
+Tile uiTile();
 bool uiOnVolumeTile();
 AppMode uiAppMode();
 void uiKnobFeedback(int steps);  // retour visuel immédiat sur un cran de molette

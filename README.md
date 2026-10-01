@@ -18,6 +18,17 @@ extraite de l'icône, et une molette qui fait ce qu'il faut selon l'app.
     en MQTT local (découverte SSDP + codes d'accès lus dans Bambu Studio).
   - *Claude Code* (Windows Terminal) : statut des sessions (au travail / attend ta réponse /
     terminé) via un hook ; molette = flèches, clic = Entrée, appui long = Échap.
+- **Tableau de bord** (3e tuile) : horloge avec anneau des secondes, date, météo (Open-Meteo),
+  prochain rendez-vous Outlook, ligne d'état (impression en cours, Claude qui attend).
+- **Tuile Philips Hue** (4e tuile) : molette = luminosité de la pièce, clic = on/off,
+  appui long = pièce suivante, anneau à la couleur réelle des lampes. Association : clic sur la
+  tuile puis bouton du pont (clé stockée dans `knob/pc/hue.json`, hors git).
+- **Alertes globales** : fin/échec/pause d'impression, Claude qui attend ou a terminé — bulle
+  plein écran et LEDs qui clignotent, quelle que soit l'app ; clic ou tap pour fermer.
+- **Veille** : écran tamisé + horloge quand la session est verrouillée ou après 10 min
+  d'inactivité, quasi éteint et LEDs coupées la nuit ; molette ou toucher = réveil.
+- **Caméra Bambu** (X1 / H2D) : appui long dans Bambu Studio, image ronde à 3 i/s dans
+  l'anneau de progression (ffmpeg requis).
 - **Profils par app** (Chrome, Discord, Outlook, Teams, Telegram, WhatsApp, Mattermost…),
   surchargeables à chaud dans `knob/pc/profiles.json`.
 - Sans PC, le module reste un bouton de volume USB HID autonome.

@@ -12,5 +12,6 @@ ButtonEvent hwPollButton();
 
 void hwSendMediaKey(uint16_t usage);  // touche multimédia HID (volume, mute, play...)
 void hwSetLeds(uint32_t rgb, uint8_t count, uint8_t brightness);
+void hwSetBacklight(uint8_t level);  // 0 = éteint, 255 = max
 
 extern USBCDC usbSerial;

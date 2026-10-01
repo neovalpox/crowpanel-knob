@@ -8,20 +8,26 @@
 #define COL_DIM 0x7C8494
 #define COL_MUTE 0xFF4D5E
 #define COL_MASTER 0x22D3EE
+#define COL_HUE 0xFFB547
 #define ARC_SIZE 228
 #define AUTO_RETURN_MS 8000
+#define NOTIFY_MS 8000
+#define WAKE_MS 15000
+#define BACKLIGHT_MAX 220
+#define TILE_COUNT 4
 
-static lv_obj_t *tv, *tileApp, *tileVol;
-static lv_obj_t *dots[2], *usbIcon;
+static lv_obj_t *tv, *tiles[TILE_COUNT];
+static lv_obj_t *dots[TILE_COUNT], *usbIcon;
 
 // Tuile application
 static lv_obj_t *appContent, *halo, *appIcon, *haloSymbol, *appArc, *appName, *appValue, *appHint;
+static lv_obj_t *camBox, *camImg;
 static AppMode appMode = MODE_MASTER;
 static uint32_t appColor = COL_MASTER;
 static int appVolume = -1;
 static bool appMuted = false;
 static int scrollAngle = 0;
-static int appPermille = 0;           // MEDIA / PROGRESS
+static int appPermille = 0;  // MEDIA / PROGRESS
 static char appValueText[32] = "";
 static lv_obj_t *flashLabel;
 
@@ -29,6 +35,28 @@ static lv_obj_t *flashLabel;
 static lv_obj_t *volArc, *volNumber, *volSymbol, *volTitle;
 static int masterVolume = 0;
 static bool masterMuted = false;
+
+// Tableau de bord
+static lv_obj_t *secArc, *timeLabel, *dateLabel, *tempLabel, *degRing, *weatherDesc, *eventLabel, *statusLabel;
+static long clockBase = -1;  // secondes depuis minuit au moment clockBaseMs
+static unsigned long clockBaseMs = 0;
+static int shownMinute = -1;
+
+// Hue
+static lv_obj_t *hueArc, *hueSym, *hueName, *hueValue, *hueHint;
+static uint32_t hueColor = COL_HUE;
+static int huePermille = 0;
+
+// Alerte
+static lv_obj_t *notifPanel, *notifRing, *notifSym, *notifTitle, *notifSub;
+static unsigned long notifUntil = 0;
+static uint32_t notifColor = 0;
+
+// Veille
+static uint8_t sleepBacklight = BACKLIGHT_MAX;
+static bool sleepLeds = true, sleepClock = false;
+static unsigned long wakeUntil = 0;
+static float backlight = BACKLIGHT_MAX;
 
 static bool synced = false;
 static uint8_t ledFlash = 0;
@@ -58,7 +86,13 @@ static lv_obj_t *makeLabel(lv_obj_t *parent, const lv_font_t *font, uint32_t col
   lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
   lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(l, LV_ALIGN_CENTER, 0, y);
+  lv_label_set_text(l, "");
   return l;
+}
+
+static void limitWidth(lv_obj_t *label, int width, lv_label_long_mode_t mode = LV_LABEL_LONG_DOT) {
+  lv_label_set_long_mode(label, mode);
+  lv_obj_set_width(label, width);
 }
 
 static void makeTransparent(lv_obj_t *o) {
@@ -66,6 +100,16 @@ static void makeTransparent(lv_obj_t *o) {
   lv_obj_set_style_border_width(o, 0, 0);
   lv_obj_set_style_pad_all(o, 0, 0);
   lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static lv_obj_t *makeCircle(lv_obj_t *parent, int size) {
+  lv_obj_t *o = lv_obj_create(parent);
+  lv_obj_set_size(o, size, size);
+  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_border_width(o, 0, 0);
+  lv_obj_set_style_pad_all(o, 0, 0);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  return o;
 }
 
 // Anime l'extrémité de l'arc (en degrés) pour des transitions douces.
@@ -98,7 +142,8 @@ static void sizeExec(void *o, int32_t v) {
 }
 static void opaExec(void *o, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)o, v, 0); }
 
-static void startAnim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int ms, lv_anim_path_cb_t path, int delay = 0) {
+static void startAnim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int ms, lv_anim_path_cb_t path,
+                      int delay = 0, lv_anim_ready_cb_t ready = nullptr) {
   lv_anim_del(var, cb);
   lv_anim_t a;
   lv_anim_init(&a);
@@ -108,21 +153,31 @@ static void startAnim(void *var, lv_anim_exec_xcb_t cb, int from, int to, int ms
   lv_anim_set_time(&a, ms);
   lv_anim_set_delay(&a, delay);
   lv_anim_set_path_cb(&a, path);
+  if (ready) lv_anim_set_ready_cb(&a, ready);
   lv_anim_start(&a);
+}
+
+static void goTile(Tile t, bool anim) {
+  if (uiTile() != t) lv_obj_set_tile(tv, tiles[t], anim ? LV_ANIM_ON : LV_ANIM_OFF);
 }
 
 // ---------- Rendu de l'état
 
 static void refreshDots() {
-  bool vol = uiOnVolumeTile();
-  uint32_t accent = vol ? COL_MASTER : appColor;
-  for (int i = 0; i < 2; i++) {
-    bool active = (i == 1) == vol;
-    lv_obj_set_width(dots[i], active ? 16 : 6);
-    lv_obj_set_style_bg_color(dots[i], lv_color_hex(active ? accent : 0x3A3F4A), 0);
+  Tile cur = uiTile();
+  uint32_t accent = cur == TILE_APP ? appColor : cur == TILE_HUE ? hueColor : COL_MASTER;
+  int widths[TILE_COUNT], total = 0;
+  for (int i = 0; i < TILE_COUNT; i++) {
+    widths[i] = i == cur ? 16 : 6;
+    total += widths[i] + (i ? 5 : 0);
   }
-  lv_obj_align(dots[0], LV_ALIGN_BOTTOM_MID, vol ? -8 : -5, -12);
-  lv_obj_align(dots[1], LV_ALIGN_BOTTOM_MID, vol ? 5 : 8, -12);
+  int x = -total / 2;
+  for (int i = 0; i < TILE_COUNT; i++) {
+    lv_obj_set_width(dots[i], widths[i]);
+    lv_obj_set_style_bg_color(dots[i], lv_color_hex(i == cur ? accent : 0x3A3F4A), 0);
+    lv_obj_align(dots[i], LV_ALIGN_BOTTOM_MID, x + widths[i] / 2, -12);
+    x += widths[i] + 5;
+  }
 }
 
 // Positions des textes : en mode MEDIA, titre et artiste se suivent et l'état
@@ -183,6 +238,139 @@ static void refreshVolume() {
 static void onTileChanged(lv_event_t *) {
   refreshDots();
   ledFlash = 255;
+  usbSerial.printf("Q%d\n", (int)uiTile());
+}
+
+// ---------- Construction
+
+static void buildAppTile(lv_obj_t *t) {
+  appArc = makeArc(t, 12);
+  appContent = lv_obj_create(t);
+  lv_obj_set_size(appContent, 200, 200);
+  lv_obj_center(appContent);
+  makeTransparent(appContent);
+  lv_obj_clear_flag(appContent, LV_OBJ_FLAG_CLICKABLE);
+
+  halo = makeCircle(appContent, 84);
+  lv_obj_align(halo, LV_ALIGN_CENTER, 0, -40);
+  lv_obj_set_style_bg_opa(halo, 46, 0);
+  lv_obj_set_style_shadow_width(halo, 46, 0);
+  lv_obj_set_style_shadow_spread(halo, 2, 0);
+  lv_obj_set_style_shadow_opa(halo, 150, 0);
+
+  haloSymbol = makeLabel(appContent, &lv_font_montserrat_28, COL_TEXT, -40);
+  lv_label_set_text(haloSymbol, LV_SYMBOL_USB);
+
+  appIcon = lv_img_create(appContent);
+  lv_obj_align(appIcon, LV_ALIGN_CENTER, 0, -40);
+  lv_img_set_antialias(appIcon, true);
+  lv_obj_add_flag(appIcon, LV_OBJ_FLAG_HIDDEN);
+
+  appName = makeLabel(appContent, &lv_font_montserrat_20, COL_TEXT, 18);
+  limitWidth(appName, 170);
+  appValue = makeLabel(appContent, &lv_font_montserrat_28, COL_MASTER, 50);
+  appHint = makeLabel(appContent, &lv_font_montserrat_14, COL_DIM, 80);
+  limitWidth(appHint, 150);
+  lv_label_set_text(appName, "En attente du PC");
+  lv_label_set_text(appHint, "lance knob_companion");
+
+  // Caméra : disque découpé (clip_corner) à l'intérieur de l'anneau de progression.
+  camBox = makeCircle(t, 196);
+  lv_obj_center(camBox);
+  lv_obj_set_style_bg_color(camBox, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_clip_corner(camBox, true, 0);
+  camImg = lv_img_create(camBox);
+  lv_obj_center(camImg);
+  lv_img_set_zoom(camImg, 196 * 256 / 160);
+  lv_obj_add_flag(camBox, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void buildVolumeTile(lv_obj_t *t) {
+  volArc = makeArc(t, 16);
+  lv_obj_set_style_arc_color(volArc, lv_color_hex(COL_MASTER), LV_PART_INDICATOR);
+  volTitle = makeLabel(t, &lv_font_montserrat_14, COL_DIM, -58);
+  lv_obj_set_style_text_letter_space(volTitle, 4, 0);
+  lv_label_set_text(volTitle, "VOLUME");
+  volNumber = makeLabel(t, &lv_font_montserrat_48, COL_TEXT, -6);
+  volSymbol = makeLabel(t, &lv_font_montserrat_28, COL_MASTER, 46);
+}
+
+static void buildDashTile(lv_obj_t *t) {
+  // Anneau des secondes : balaie le tour en continu.
+  secArc = makeArc(t, 4);
+  lv_arc_set_rotation(secArc, 270);
+  lv_arc_set_bg_angles(secArc, 0, 360);
+  lv_obj_set_style_arc_color(secArc, lv_color_hex(0x10131A), LV_PART_MAIN);
+  lv_obj_set_style_arc_color(secArc, lv_color_hex(COL_MASTER), LV_PART_INDICATOR);
+
+  timeLabel = makeLabel(t, &lv_font_montserrat_48, COL_TEXT, -46);
+  lv_label_set_text(timeLabel, "--:--");
+  dateLabel = makeLabel(t, &lv_font_montserrat_14, COL_DIM, -12);
+  limitWidth(dateLabel, 170);
+
+  // Météo : température + petit rond pour le degré (absent de la police) + description.
+  lv_obj_t *row = lv_obj_create(t);
+  makeTransparent(row);
+  lv_obj_set_size(row, 190, 30);
+  lv_obj_align(row, LV_ALIGN_CENTER, 0, 18);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_column(row, 3, 0);
+  tempLabel = lv_label_create(row);
+  lv_obj_set_style_text_font(tempLabel, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_color(tempLabel, lv_color_hex(COL_TEXT), 0);
+  lv_label_set_text(tempLabel, "");
+  degRing = makeCircle(row, 7);
+  lv_obj_set_style_bg_opa(degRing, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(degRing, 2, 0);
+  lv_obj_set_style_border_color(degRing, lv_color_hex(COL_TEXT), 0);
+  lv_obj_add_flag(degRing, LV_OBJ_FLAG_HIDDEN);
+  weatherDesc = lv_label_create(row);
+  lv_obj_set_style_text_font(weatherDesc, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(weatherDesc, lv_color_hex(COL_DIM), 0);
+  lv_obj_set_style_pad_left(weatherDesc, 6, 0);
+  lv_label_set_text(weatherDesc, "");
+
+  eventLabel = makeLabel(t, &lv_font_montserrat_14, COL_MASTER, 50);
+  limitWidth(eventLabel, 180);
+  statusLabel = makeLabel(t, &lv_font_montserrat_14, COL_DIM, 72);
+  limitWidth(statusLabel, 160);
+}
+
+static void buildHueTile(lv_obj_t *t) {
+  hueArc = makeArc(t, 16);
+  lv_obj_set_style_arc_color(hueArc, lv_color_hex(COL_HUE), LV_PART_INDICATOR);
+  hueSym = makeLabel(t, &lv_font_montserrat_28, COL_HUE, -58);
+  lv_label_set_text(hueSym, LV_SYMBOL_CHARGE);
+  hueName = makeLabel(t, &lv_font_montserrat_20, COL_TEXT, -18);
+  limitWidth(hueName, 170);
+  lv_label_set_text(hueName, "Hue");
+  hueValue = makeLabel(t, &lv_font_montserrat_28, COL_HUE, 20);
+  hueHint = makeLabel(t, &lv_font_montserrat_14, COL_DIM, 58);
+  limitWidth(hueHint, 160);
+  lv_label_set_text(hueHint, "en attente du PC");
+}
+
+static void onNotifClicked(lv_event_t *) { uiNotifyDismiss(); }
+
+static void buildNotifPanel() {
+  notifPanel = makeCircle(lv_layer_top(), 240);
+  lv_obj_center(notifPanel);
+  lv_obj_set_style_bg_color(notifPanel, lv_color_hex(0x05060A), 0);
+  lv_obj_set_style_bg_opa(notifPanel, 242, 0);
+  lv_obj_add_flag(notifPanel, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(notifPanel, onNotifClicked, LV_EVENT_CLICKED, NULL);
+
+  notifRing = makeArc(notifPanel, 8);
+  lv_arc_set_rotation(notifRing, 0);
+  lv_arc_set_bg_angles(notifRing, 0, 360);
+  lv_arc_set_angles(notifRing, 0, 360);
+  notifSym = makeLabel(notifPanel, &lv_font_montserrat_48, COL_TEXT, -42);
+  notifTitle = makeLabel(notifPanel, &lv_font_montserrat_20, COL_TEXT, 16);
+  limitWidth(notifTitle, 180);
+  notifSub = makeLabel(notifPanel, &lv_font_montserrat_14, COL_DIM, 46);
+  limitWidth(notifSub, 170);
+  lv_obj_add_flag(notifPanel, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---------- API
@@ -194,66 +382,21 @@ void uiBegin() {
   tv = lv_tileview_create(scr);
   lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, 0);
   lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
-  tileApp = lv_tileview_add_tile(tv, 0, 0, LV_DIR_RIGHT);
-  tileVol = lv_tileview_add_tile(tv, 1, 0, LV_DIR_LEFT);
+  for (int i = 0; i < TILE_COUNT; i++) {
+    lv_dir_t dir = i == 0 ? LV_DIR_RIGHT : i == TILE_COUNT - 1 ? LV_DIR_LEFT : LV_DIR_HOR;
+    tiles[i] = lv_tileview_add_tile(tv, i, 0, dir);
+  }
   lv_obj_add_event_cb(tv, onTileChanged, LV_EVENT_VALUE_CHANGED, NULL);
 
-  // --- Tuile application
-  appArc = makeArc(tileApp, 12);
-  appContent = lv_obj_create(tileApp);
-  lv_obj_set_size(appContent, 200, 200);
-  lv_obj_center(appContent);
-  makeTransparent(appContent);
-  lv_obj_clear_flag(appContent, LV_OBJ_FLAG_CLICKABLE);
-
-  halo = lv_obj_create(appContent);
-  lv_obj_set_size(halo, 84, 84);
-  lv_obj_align(halo, LV_ALIGN_CENTER, 0, -40);
-  lv_obj_set_style_radius(halo, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_border_width(halo, 0, 0);
-  lv_obj_set_style_bg_opa(halo, 46, 0);
-  lv_obj_set_style_shadow_width(halo, 46, 0);
-  lv_obj_set_style_shadow_spread(halo, 2, 0);
-  lv_obj_set_style_shadow_opa(halo, 150, 0);
-  lv_obj_clear_flag(halo, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-
-  haloSymbol = lv_label_create(appContent);
-  lv_obj_set_style_text_font(haloSymbol, &lv_font_montserrat_28, 0);
-  lv_obj_set_style_text_color(haloSymbol, lv_color_hex(COL_TEXT), 0);
-  lv_label_set_text(haloSymbol, LV_SYMBOL_USB);
-  lv_obj_align(haloSymbol, LV_ALIGN_CENTER, 0, -40);
-
-  appIcon = lv_img_create(appContent);
-  lv_obj_align(appIcon, LV_ALIGN_CENTER, 0, -40);
-  lv_img_set_antialias(appIcon, true);
-  lv_obj_add_flag(appIcon, LV_OBJ_FLAG_HIDDEN);
-
-  appName = makeLabel(appContent, &lv_font_montserrat_20, COL_TEXT, 18);
-  lv_label_set_long_mode(appName, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(appName, 170);
-  appValue = makeLabel(appContent, &lv_font_montserrat_28, COL_MASTER, 50);
-  appHint = makeLabel(appContent, &lv_font_montserrat_14, COL_DIM, 80);
-  lv_label_set_long_mode(appHint, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(appHint, 150);
-  lv_label_set_text(appName, "En attente du PC");
-  lv_label_set_text(appHint, "lance knob_companion");
-
-  // --- Tuile volume
-  volArc = makeArc(tileVol, 16);
-  lv_obj_set_style_arc_color(volArc, lv_color_hex(COL_MASTER), LV_PART_INDICATOR);
-  volTitle = makeLabel(tileVol, &lv_font_montserrat_14, COL_DIM, -58);
-  lv_obj_set_style_text_letter_space(volTitle, 4, 0);
-  lv_label_set_text(volTitle, "VOLUME");
-  volNumber = makeLabel(tileVol, &lv_font_montserrat_48, COL_TEXT, -6);
-  volSymbol = makeLabel(tileVol, &lv_font_montserrat_28, COL_MASTER, 46);
+  buildAppTile(tiles[TILE_APP]);
+  buildVolumeTile(tiles[TILE_VOL]);
+  buildDashTile(tiles[TILE_DASH]);
+  buildHueTile(tiles[TILE_HUE]);
 
   // --- Éléments fixes : indicateur de page, état USB
-  for (int i = 0; i < 2; i++) {
-    dots[i] = lv_obj_create(scr);
-    lv_obj_set_size(dots[i], 6, 6);
+  for (int i = 0; i < TILE_COUNT; i++) {
+    dots[i] = makeCircle(scr, 6);
     lv_obj_set_style_radius(dots[i], 3, 0);
-    lv_obj_set_style_border_width(dots[i], 0, 0);
-    lv_obj_clear_flag(dots[i], LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   }
   usbIcon = makeLabel(scr, &lv_font_montserrat_14, COL_MUTE, 0);
   lv_label_set_text(usbIcon, LV_SYMBOL_USB);
@@ -263,9 +406,10 @@ void uiBegin() {
   flashLabel = lv_label_create(lv_layer_top());
   lv_obj_set_style_text_font(flashLabel, &lv_font_montserrat_48, 0);
   lv_obj_set_style_text_opa(flashLabel, 0, 0);
-  lv_obj_set_style_bg_color(flashLabel, lv_color_hex(0x000000), 0);
   lv_obj_center(flashLabel);
   lv_label_set_text(flashLabel, "");
+
+  buildNotifPanel();
 
   refreshDots();
   refreshVolume();
@@ -295,6 +439,7 @@ void uiSetApp(const char *name, AppMode mode, uint32_t rgb, const char *hint, co
   appMuted = false;
   appPermille = 0;
   appValueText[0] = 0;
+  uiHideCamera();
   applyLayout();
   lv_label_set_text(appName, name);
   lv_label_set_text(appHint, hint);
@@ -323,7 +468,7 @@ void uiSetApp(const char *name, AppMode mode, uint32_t rgb, const char *hint, co
   startAnim(appIcon, zoomExec, 110, 256, 420, lv_anim_path_overshoot);
   startAnim(halo, sizeExec, 40, 84, 460, lv_anim_path_overshoot);
 
-  if (uiOnVolumeTile()) lv_obj_set_tile(tv, tileApp, LV_ANIM_ON);
+  if (!sleepClock) goTile(TILE_APP, true);
   refreshDots();
   ledFlash = 255;
 }
@@ -374,48 +519,202 @@ void uiFlash(const char *text) {
   startAnim(flashLabel, flashOpaExec, 420, 0, 650, lv_anim_path_ease_in);
 }
 
-bool uiOnVolumeTile() { return lv_tileview_get_tile_act(tv) == tileVol; }
+// ---------- Alertes
+
+void uiNotify(const char *symbol, const char *title, const char *subtitle, uint32_t rgb) {
+  notifColor = rgb;
+  lv_label_set_text(notifSym, symbol);
+  lv_obj_set_style_text_color(notifSym, lv_color_hex(rgb), 0);
+  lv_obj_set_style_arc_color(notifRing, lv_color_hex(rgb), LV_PART_INDICATOR);
+  lv_label_set_text(notifTitle, title);
+  lv_label_set_text(notifSub, subtitle);
+  lv_obj_clear_flag(notifPanel, LV_OBJ_FLAG_HIDDEN);
+  startAnim(notifPanel, opaExec, 0, 255, 220, lv_anim_path_ease_out);
+  notifUntil = millis() + NOTIFY_MS;
+  uiWake();
+}
+
+bool uiNotifyVisible() { return notifUntil != 0; }
+
+static void notifHidden(lv_anim_t *) { lv_obj_add_flag(notifPanel, LV_OBJ_FLAG_HIDDEN); }
+
+void uiNotifyDismiss() {
+  if (!notifUntil) return;
+  notifUntil = 0;
+  startAnim(notifPanel, opaExec, 255, 0, 250, lv_anim_path_ease_in, 0, notifHidden);
+}
+
+// ---------- Tableau de bord
+
+void uiSetClock(long secondsOfDay, const char *date) {
+  clockBase = secondsOfDay;
+  clockBaseMs = millis();
+  shownMinute = -1;
+  if (strcmp(lv_label_get_text(dateLabel), date)) lv_label_set_text(dateLabel, date);
+}
+
+void uiSetWeather(const char *temp, const char *desc) {
+  lv_label_set_text(tempLabel, temp);
+  lv_label_set_text(weatherDesc, desc);
+  if (temp[0])
+    lv_obj_clear_flag(degRing, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_add_flag(degRing, LV_OBJ_FLAG_HIDDEN);
+}
+
+void uiSetEvent(const char *text) {
+  if (strcmp(lv_label_get_text(eventLabel), text)) lv_label_set_text(eventLabel, text);
+}
+
+void uiSetStatus(const char *text, uint32_t rgb) {
+  if (strcmp(lv_label_get_text(statusLabel), text)) lv_label_set_text(statusLabel, text);
+  lv_obj_set_style_text_color(statusLabel, lv_color_hex(rgb), 0);
+}
+
+static void tickClock() {
+  if (clockBase < 0) return;
+  unsigned long ms = (millis() - clockBaseMs) + (unsigned long)(clockBase % 86400) * 1000UL;
+  long secs = (ms / 1000) % 86400;
+  int minute = secs / 60;
+  if (minute != shownMinute) {
+    shownMinute = minute;
+    lv_label_set_text_fmt(timeLabel, "%02d:%02d", minute / 60, minute % 60);
+  }
+  if (uiTile() == TILE_DASH) {
+    // Balayage continu : l'anneau fait un tour par minute.
+    int deg = (int)((ms % 60000UL) * 360UL / 60000UL);
+    lv_arc_set_angles(secArc, 0, deg);
+  }
+}
+
+// ---------- Veille
+
+void uiSetSleep(uint8_t level, bool leds, bool showClock) {
+  sleepBacklight = level;
+  sleepLeds = leds;
+  if (showClock && !sleepClock) goTile(TILE_DASH, false);
+  if (!showClock && sleepClock) goTile(TILE_APP, true);
+  sleepClock = showClock;
+}
+
+void uiWake() { wakeUntil = millis() + WAKE_MS; }
+
+static void tickBacklight() {
+  uint8_t target = millis() < wakeUntil ? BACKLIGHT_MAX : sleepBacklight;
+  if (fabsf(backlight - target) < 0.5f) return;
+  backlight += (target - backlight) * 0.08f;  // fondu doux
+  if (fabsf(backlight - target) < 1) backlight = target;
+  hwSetBacklight((uint8_t)backlight);
+}
+
+// ---------- Caméra
+
+void uiShowCamera(const lv_img_dsc_t *frame) {
+  lv_img_cache_invalidate_src(frame);
+  lv_img_set_src(camImg, frame);
+  lv_obj_invalidate(camImg);
+  if (lv_obj_has_flag(camBox, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_clear_flag(camBox, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(appContent, LV_OBJ_FLAG_HIDDEN);
+    startAnim(camBox, opaExec, 0, 255, 250, lv_anim_path_ease_out);
+  }
+}
+
+void uiHideCamera() {
+  if (lv_obj_has_flag(camBox, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_obj_add_flag(camBox, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(appContent, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---------- Hue
+
+void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint) {
+  lv_label_set_text(hueName, name);
+  lv_label_set_text(hueValue, valueText);
+  lv_label_set_text(hueHint, hint);
+  if (rgb != hueColor) {
+    hueColor = rgb;
+    lv_obj_set_style_arc_color(hueArc, lv_color_hex(rgb), LV_PART_INDICATOR);
+    lv_obj_set_style_text_color(hueSym, lv_color_hex(rgb), 0);
+    lv_obj_set_style_text_color(hueValue, lv_color_hex(rgb), 0);
+    refreshDots();
+  }
+  permille = constrain(permille, 0, 1000);
+  if (permille != huePermille) {
+    huePermille = permille;
+    animArcTo(hueArc, 270 * permille / 1000);
+  }
+}
+
+// ---------- Divers
+
+Tile uiTile() {
+  lv_obj_t *act = lv_tileview_get_tile_act(tv);
+  for (int i = 0; i < TILE_COUNT; i++)
+    if (tiles[i] == act) return (Tile)i;
+  return TILE_APP;
+}
+
+bool uiOnVolumeTile() { return uiTile() == TILE_VOL; }
 AppMode uiAppMode() { return appMode; }
 
 void uiKnobFeedback(int steps) {
   lv_disp_trig_activity(NULL);
+  uiWake();
   ledFlash = 255;
-  if (!uiOnVolumeTile() && appMode == MODE_SCROLL) {
+  if (uiTile() == TILE_APP && appMode == MODE_SCROLL) {
     int from = scrollAngle;
     scrollAngle += steps * 18;
     startAnim(appArc, scrollExec, from, scrollAngle, 140, lv_anim_path_ease_out);
   }
 }
 
-void uiTick() {
+static void tickLeds() {
   static unsigned long lastLed = 0;
   static uint32_t lastKey = 0xFFFFFFFF;
   unsigned long now = millis();
-
-  if (uiOnVolumeTile() && lv_disp_get_inactive_time(NULL) > AUTO_RETURN_MS)
-    lv_obj_set_tile(tv, tileApp, LV_ANIM_ON);
-
   if (now - lastLed < 30) return;
   lastLed = now;
 
-  uint32_t color;
-  uint8_t count, bright;
-  if (uiOnVolumeTile()) {
+  uint32_t color = 0;
+  uint8_t count = 5, bright = 0;
+  Tile t = uiTile();
+  if (notifUntil) {
+    color = notifColor;  // clignote, même la nuit : c'est une alerte
+    bright = (now / 220) % 2 ? 170 : 15;
+  } else if (!sleepLeds && now >= wakeUntil) {
+    bright = 0;
+  } else if (t == TILE_VOL) {
     color = masterMuted ? COL_MUTE : COL_MASTER;
     count = masterMuted ? 5 : (masterVolume * 5 + 99) / 100;
     bright = 70 + ledFlash / 3;
+  } else if (t == TILE_HUE) {
+    color = hueColor;
+    count = (huePermille * 5 + 999) / 1000;
+    bright = 70 + ledFlash / 3;
   } else {
     // Respiration lente dans la couleur de l'app, flash sur chaque cran.
-    color = appColor;
-    count = 5;
+    color = t == TILE_DASH ? COL_MASTER : appColor;
     float breath = 0.5f + 0.5f * sinf(now / 900.0f);
-    bright = 18 + (uint8_t)(22 * breath) + ledFlash / 2;
+    bright = (t == TILE_DASH ? 6 : 18) + (uint8_t)((t == TILE_DASH ? 10 : 22) * breath) + ledFlash / 2;
   }
   ledFlash = ledFlash > 24 ? ledFlash - 24 : 0;
 
-  uint32_t key = color ^ (count << 24) ^ (bright << 27) ^ bright;
+  uint32_t key = color ^ ((uint32_t)count << 24) ^ ((uint32_t)bright << 27) ^ bright;
   if (key != lastKey) {
     hwSetLeds(color, count, bright);
     lastKey = key;
   }
+}
+
+void uiTick() {
+  unsigned long now = millis();
+  Tile t = uiTile();
+  if ((t == TILE_VOL || t == TILE_HUE) && !sleepClock && lv_disp_get_inactive_time(NULL) > AUTO_RETURN_MS)
+    goTile(TILE_APP, true);
+  if (notifUntil && now > notifUntil) uiNotifyDismiss();
+  if (lv_disp_get_inactive_time(NULL) < 200) uiWake();  // toucher l'écran réveille aussi
+  tickClock();
+  tickBacklight();
+  tickLeds();
 }

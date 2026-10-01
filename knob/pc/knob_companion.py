@@ -17,6 +17,7 @@ import logging
 import os
 import time
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 
 import comtypes
@@ -28,6 +29,9 @@ from serial.tools import list_ports
 from pycaw.pycaw import AudioUtilities
 
 import bambu
+import camera
+import dashboard
+import hue
 import media
 
 HERE = Path(__file__).resolve().parent
@@ -261,7 +265,7 @@ DEFAULT_PROFILES = {
     "windowsterminal.exe": {"name": "Terminal", "widget": "claude", "knob": "keys", "cw": "down", "ccw": "up",
                             "knob_label": "fleches", "click": "key:enter", "long": "key:esc"},
     "bambu-studio.exe": {"name": "Bambu Studio", "widget": "bambu", "knob": "scroll",
-                         "click": "key:ctrl+r", "long": None},
+                         "click": "key:ctrl+r", "long": "bambu:camera"},
     "chatgpt.exe": {"name": "ChatGPT", "knob": "scroll", "click": "key:ctrl+shift+o", "long": None},
     "telegram.exe": CHAT_PROFILE | {"name": "Telegram"},
     "whatsapp.root.exe": CHAT_PROFILE | {"name": "WhatsApp"},
@@ -327,6 +331,29 @@ def app_sessions(exe_name):
 
 # ---------------------------------------------------------------- Widgets
 
+TILE_APP, TILE_VOL, TILE_DASH, TILE_HUE = range(4)  # ordre des tuiles du firmware
+
+
+class LASTINPUTINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
+
+
+def idle_seconds():
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    user32.GetLastInputInfo(ctypes.byref(info))
+    return (ctypes.windll.kernel32.GetTickCount() - info.dwTime) / 1000
+
+
+def is_locked():
+    """Session verrouillée : le bureau de saisie n'est plus accessible."""
+    desk = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
+    if not desk:
+        return True
+    ok = user32.SwitchDesktop(desk)
+    user32.CloseDesktop(desk)
+    return not ok
+
+
 CLAUDE_STATUS = Path.home() / ".claude" / "knob_status.json"
 COL_OK, COL_WARN, COL_ERR, COL_IDLE, COL_CLAUDE = "3DDC84", "FFB020", "FF4D5E", "7C8494", "D97757"
 
@@ -368,6 +395,18 @@ class Companion:
         self.rx = b""
         self.media = media.MediaWatcher()
         self.bambu = bambu.BambuWatcher()
+        self.dash = dashboard.Dashboard()
+        self.hue = hue.Hue()
+        self.camera = camera.Camera()
+        self.cam_on = False
+        self.cam_seq = 0
+        self.tile = 0              # tuile affichée sur le module (message Q)
+        self.sent = {}             # derniers messages envoyés par clé (anti-doublons)
+        self.claude_prev = {}      # état précédent des sessions Claude (alertes)
+        self.bambu_prev = {}       # état précédent des imprimantes (alertes)
+        self.last_slow = 0
+        self.last_clock = 0
+        self.last_hue = 0
 
     # --- liaison série
     def connect(self):
@@ -385,6 +424,8 @@ class Companion:
         self.ser = ser
         self.last_master = None
         self.app_key = None
+        self.sent = {}
+        self.last_clock = 0
         self.rx = b""
         log.info("connecté sur %s", port)
         return True
@@ -472,6 +513,7 @@ class Companion:
             return
         if fg != self.app_key:
             self.mode_override = None
+            self.set_camera(False)
             self.push_app(fg)
 
     def push_appvol(self):
@@ -579,6 +621,113 @@ class Companion:
         view["icon"] = icon
         self.view = view
 
+    def send_once(self, key, msg):
+        """N'envoie que si le message a changé depuis le dernier envoi sous cette clé."""
+        if self.sent.get(key) != msg:
+            self.send(msg)
+            self.sent[key] = msg
+
+    # --- caméra Bambu
+    def set_camera(self, on):
+        if not on:
+            if self.cam_on:
+                self.camera.stop()
+                if self.ser:
+                    self.send("j\n")
+            self.cam_on = False
+            return
+        printers = self.bambu.summaries()
+        if not printers:
+            return
+        p = printers[self.bambu_sel % len(printers)]
+        if self.camera.start(p["ip"], self.bambu.access_code(p["serial"])):
+            self.cam_on, self.cam_seq = True, 0
+            self.send(f"F{SYM_REFRESH}\n")
+
+    def push_camera(self):
+        if not self.cam_on:
+            return
+        if not self.camera.running:
+            self.set_camera(False)
+            return
+        if self.camera.frame and self.camera.seq != self.cam_seq:
+            self.cam_seq = self.camera.seq
+            frame = self.camera.frame
+            self.send(f"J{camera.SIZE} {camera.SIZE} {len(frame)}\n".encode() + frame)
+
+    # --- tableau de bord
+    def push_dashboard(self):
+        now = datetime.now()
+        if time.monotonic() - self.last_clock > 30:
+            self.last_clock = time.monotonic()
+            secs = now.hour * 3600 + now.minute * 60 + now.second
+            self.send(f"K{secs}\t{dashboard.date_text(now)}\n")
+        temp, desc = self.dash.weather
+        self.send_once("W", f"W{temp}\t{desc}\n")
+        self.send_once("E", f"E{self.dash.event}\n")
+        self.send_once("S", f"S{self.status_line()}\n")
+
+    def status_line(self):
+        for p in self.bambu.summaries():
+            if p["state"] == "RUNNING":
+                return f"{ascii_text(p['name'], 10)} {p['percent']}% - {fmt_minutes(p['remaining'])}\t{COL_OK}"
+        sessions = claude_sessions()
+        if sessions and sessions[0].get("state") == "waiting":
+            return f"Claude attend ta reponse\t{COL_WARN}"
+        if sessions and sessions[0].get("state") == "working":
+            return f"Claude au travail\t{COL_CLAUDE}"
+        return f"\t{COL_IDLE}"
+
+    # --- veille
+    def push_sleep(self):
+        locked, idle = is_locked(), idle_seconds()
+        night = datetime.now().hour >= 23 or datetime.now().hour < 7
+        if night and (locked or idle > 120):
+            z = "Z8 0 1"            # nuit : quasi éteint, LEDs coupées, horloge
+        elif locked or idle > 600:
+            z = "Z70 0 1"           # absent : tamisé, horloge
+        else:
+            z = "Z220 1 0"
+        self.send_once("Z", z + "\n")
+
+    # --- alertes (affichées par-dessus n'importe quelle app)
+    def notify(self, symbol, title, subtitle, color):
+        self.send(f"N{symbol}\t{ascii_text(title, 22)}\t{ascii_text(subtitle, 26)}\t{color}\n")
+        log.info("alerte : %s - %s", title, subtitle)
+
+    def check_alerts(self):
+        fg_exe = (self.app or {}).get("exe", "").lower()
+        # Claude : passage de "au travail" à "attend" ou "terminé".
+        try:
+            data = json.loads(CLAUDE_STATUS.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        for sid, s in data.items():
+            prev, cur = self.claude_prev.get(sid), s.get("state")
+            if prev == "working" and cur != "working" and fg_exe != "windowsterminal.exe":
+                project = Path(s.get("cwd") or "Claude").name
+                if cur == "waiting":
+                    self.notify(SYM_WARN, "Claude attend", project, COL_WARN)
+                elif cur == "done":
+                    self.notify(SYM_OK, "Claude a termine", project, COL_OK)
+        self.claude_prev = {sid: s.get("state") for sid, s in data.items()}
+        # Bambu : fin, échec, pause.
+        for p in self.bambu.summaries():
+            prev, cur = self.bambu_prev.get(p["serial"]), p["state"]
+            if prev and prev != cur:
+                if cur == "FINISH":
+                    self.notify(SYM_OK, "Impression terminee", p["name"], COL_OK)
+                elif cur == "FAILED":
+                    self.notify(SYM_CLOSE, "Impression en echec", p["name"], COL_ERR)
+                elif cur == "PAUSE":
+                    self.notify(SYM_PAUSE, "Impression en pause", p["name"], COL_WARN)
+            self.bambu_prev[p["serial"]] = cur
+
+    # --- Hue
+    def push_hue(self):
+        name, permille, value, color, hint = self.hue.view()
+        self.send_once("Y", f"Y{ascii_text(name, 18)}\t{permille}\t{value}\t{color}\t{hint}\n")
+
     # --- événements du module
     def run_action(self, action):
         if not action:
@@ -603,6 +752,8 @@ class Companion:
                 s.SetMute(0 if s.GetMute() else 1, None)
         elif action == "bambu:next":
             self.bambu_sel += 1
+        elif action == "bambu:camera":
+            self.set_camera(not self.cam_on)
 
     def on_rotate(self, steps):
         app = self.app
@@ -646,7 +797,21 @@ class Companion:
             if not msg:
                 continue
             log.debug("module : %s", msg)
-            if msg[0] == "R":
+            if msg[0] == "Q":
+                self.tile = int(msg[1:] or 0)
+            elif msg[0] == "M":
+                log.info("module : %s octets de tas libres", msg[1:])
+            elif self.tile == TILE_HUE and msg[0] in "RCL":
+                if msg[0] == "R":
+                    self.hue.adjust(int(msg[1:]))
+                elif msg == "C":
+                    self.hue.toggle()
+                else:
+                    self.hue.next_group()
+                self.push_hue()
+            elif self.tile == TILE_DASH:
+                pass  # rien à piloter sur l'horloge
+            elif msg[0] == "R":
                 self.on_rotate(int(msg[1:]))
             elif msg == "C" and self.app:
                 self.run_action(self.app["profile"].get("click"))
@@ -683,12 +848,25 @@ class Companion:
             self.push_appvol()
         if now - self.last_widget > 0.25:
             self.last_widget = now
-            try:
-                self.update_widget()
-            except (serial.SerialException, OSError):
-                raise
-            except Exception:
-                log.exception("widget")
+            self.guarded(self.update_widget)
+        if now - self.last_hue > (0.2 if self.tile == TILE_HUE else 2):
+            self.last_hue = now
+            self.guarded(self.push_hue)
+        if now - self.last_slow > 1:
+            self.last_slow = now
+            self.guarded(self.push_dashboard)
+            self.guarded(self.push_sleep)
+            self.guarded(self.check_alerts)
+        self.guarded(self.push_camera)
+
+    def guarded(self, fn):
+        """Une erreur dans un widget ne doit jamais couper la liaison."""
+        try:
+            fn()
+        except serial.SerialException:
+            raise
+        except Exception:
+            log.exception(fn.__name__)
 
     def run(self):
         comtypes.CoInitialize()

@@ -72,6 +72,8 @@ class Printer:
     def summary(self):
         s = self.state
         return {
+            "serial": self.serial,
+            "ip": self.ip,
             "name": self.name,
             "model": self.model,
             "state": s.get("gcode_state", "IDLE"),
@@ -128,6 +130,9 @@ class BambuWatcher:
             with self.lock:
                 for p in self.printers.values():
                     p.request_full()
+
+    def access_code(self, serial):
+        return self.codes.get(serial)
 
     def summaries(self):
         """Imprimantes en ligne, celles qui impriment d'abord."""

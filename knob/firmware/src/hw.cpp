@@ -124,6 +124,8 @@ void hwSetLeds(uint32_t rgb, uint8_t count, uint8_t brightness) {
   leds.show();
 }
 
+void hwSetBacklight(uint8_t level) { analogWrite(TFT_BLK, level); }
+
 void hwBegin() {
   pinMode(LCD_PWR_EN1, OUTPUT);
   pinMode(LCD_PWR_EN2, OUTPUT);
@@ -134,7 +136,7 @@ void hwBegin() {
   // port USB-JTAG du bootloader (303A:1001).
   USB.PID(0x4C4B);
   USB.productName("CrowPanel Knob");
-  usbSerial.setRxBufferSize(32768);
+  usbSerial.setRxBufferSize(16384);
   usbSerial.begin(115200);
   consumer.begin();
   USB.begin();
