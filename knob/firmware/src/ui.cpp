@@ -14,7 +14,7 @@
 #define NOTIFY_MS 8000
 #define WAKE_MS 15000
 #define BACKLIGHT_MAX 220
-#define TILE_COUNT 5
+#define TILE_COUNT 6
 
 static lv_obj_t *tv, *tiles[TILE_COUNT];
 static lv_obj_t *dots[TILE_COUNT], *usbIcon;
@@ -50,6 +50,22 @@ static lv_obj_t *netDownArc, *netUpArc, *netDown, *netUp, *netChart;
 static lv_chart_series_t *netDownSeries, *netUpSeries;
 static int netDownPermille = 0;
 
+// Système : 4 jauges (CPU, GPU, RAM, température GPU)
+static lv_obj_t *sysArc[4], *sysVal[4];
+static int sysCpu = 0;
+
+// Lanceur radial
+#define RAD_MAX 8
+#define RAD_ICON 32
+#define RAD_RADIUS 84
+static lv_obj_t *radPanel, *radSlot[RAD_MAX], *radSym[RAD_MAX], *radImg[RAD_MAX], *radName, *radHint;
+static char radLabels[RAD_MAX][20];
+static uint32_t radColors[RAD_MAX];
+static int radCount = 0, radIndex = 0;
+static bool radOpen = false;
+static unsigned long radLast = 0;
+static lv_obj_t *volDevice;
+
 // Hue
 static lv_obj_t *hueArc, *hueSym, *hueName, *hueValue, *hueHint;
 static uint32_t hueColor = COL_HUE;
@@ -61,7 +77,7 @@ static unsigned long notifUntil = 0;
 static uint32_t notifColor = 0;
 
 // Question à choix
-#define ASK_MAX_OPTS 4
+#define ASK_MAX_OPTS 8
 static lv_obj_t *askPanel, *askRing, *askTitle, *askDetail, *askChoice, *askHint;
 static char askLabels[ASK_MAX_OPTS][16];
 static uint32_t askColors[ASK_MAX_OPTS];
@@ -308,6 +324,104 @@ static void buildVolumeTile(lv_obj_t *t) {
   lv_label_set_text(volTitle, "VOLUME");
   volNumber = makeLabel(t, &lv_font_montserrat_48, COL_TEXT, -6);
   volSymbol = makeLabel(t, &lv_font_montserrat_28, COL_MASTER, 46);
+  volDevice = makeLabel(t, &lv_font_montserrat_14, COL_DIM, 76);
+  limitWidth(volDevice, 150);
+}
+
+static void buildSystemTile(lv_obj_t *t) {
+  lv_obj_t *title = makeLabel(t, &lv_font_montserrat_14, COL_DIM, -92);
+  lv_obj_set_style_text_letter_space(title, 4, 0);
+  lv_label_set_text(title, "SYSTEME");
+  static const char *captions[4] = {"CPU", "GPU", "RAM", "TEMP"};
+  static const uint32_t colors[4] = {0x22D3EE, 0x76B900, 0xA78BFA, 0x3DDC84};
+  static const int pos[4][2] = {{-46, -30}, {46, -30}, {-46, 52}, {46, 52}};
+  for (int i = 0; i < 4; i++) {
+    lv_obj_t *arc = makeArc(t, 7);
+    lv_obj_set_size(arc, 82, 82);
+    lv_obj_align(arc, LV_ALIGN_CENTER, pos[i][0], pos[i][1]);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(colors[i]), LV_PART_INDICATOR);
+    sysArc[i] = arc;
+    sysVal[i] = makeLabel(t, &lv_font_montserrat_20, COL_TEXT, 0);
+    lv_obj_align(sysVal[i], LV_ALIGN_CENTER, pos[i][0], pos[i][1] - 6);
+    lv_label_set_text(sysVal[i], "--");
+    lv_obj_t *cap = makeLabel(t, &lv_font_montserrat_14, COL_DIM, 0);
+    lv_obj_align(cap, LV_ALIGN_CENTER, pos[i][0], pos[i][1] + 15);
+    lv_label_set_text(cap, captions[i]);
+  }
+}
+
+static void launch(int index);
+
+static void onSlotClicked(lv_event_t *e) { launch((int)(intptr_t)lv_event_get_user_data(e)); }
+static void onRadialBackground(lv_event_t *) { uiLauncherClose(); }
+
+static void buildLauncher() {
+  radPanel = makeCircle(lv_layer_top(), 240);
+  lv_obj_center(radPanel);
+  lv_obj_set_style_bg_color(radPanel, lv_color_hex(0x05060A), 0);
+  lv_obj_set_style_bg_opa(radPanel, 246, 0);
+  lv_obj_add_flag(radPanel, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(radPanel, onRadialBackground, LV_EVENT_CLICKED, NULL);
+  for (int i = 0; i < RAD_MAX; i++) {
+    lv_obj_t *s = makeCircle(radPanel, 44);
+    lv_obj_set_style_bg_color(s, lv_color_hex(COL_TRACK), 0);
+    lv_obj_set_style_border_width(s, 2, 0);
+    lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s, onSlotClicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    radSym[i] = makeLabel(s, &lv_font_montserrat_20, COL_TEXT, 0);
+    radImg[i] = lv_img_create(s);
+    lv_obj_center(radImg[i]);
+    lv_obj_add_flag(radImg[i], LV_OBJ_FLAG_HIDDEN);
+    radSlot[i] = s;
+  }
+  radName = makeLabel(radPanel, &lv_font_montserrat_20, COL_TEXT, -6);
+  limitWidth(radName, 110);
+  radHint = makeLabel(radPanel, &lv_font_montserrat_14, COL_DIM, 18);
+  lv_label_set_text(radHint, "clic : lancer");
+  lv_obj_add_flag(radPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void refreshLauncher() {
+  for (int i = 0; i < RAD_MAX; i++) {
+    lv_obj_t *s = radSlot[i];
+    if (i >= radCount) {
+      lv_obj_add_flag(s, LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_clear_flag(s, LV_OBJ_FLAG_HIDDEN);
+    bool sel = i == radIndex;
+    int size = sel ? 56 : 44;
+    float a = (-90.0f + 360.0f * i / radCount) * PI / 180.0f;
+    lv_obj_set_size(s, size, size);
+    lv_obj_align(s, LV_ALIGN_CENTER, (int)(RAD_RADIUS * cosf(a)), (int)(RAD_RADIUS * sinf(a)));
+    lv_obj_set_style_border_color(s, lv_color_hex(sel ? radColors[i] : 0x2A2E38), 0);
+    lv_obj_set_style_border_width(s, sel ? 3 : 2, 0);
+    lv_obj_set_style_shadow_width(s, sel ? 22 : 0, 0);
+    lv_obj_set_style_shadow_color(s, lv_color_hex(radColors[i]), 0);
+    lv_obj_center(radSym[i]);
+    lv_obj_center(radImg[i]);
+  }
+  if (radCount) {
+    lv_label_set_text(radName, radLabels[radIndex]);
+    lv_obj_set_style_text_color(radName, lv_color_hex(radColors[radIndex]), 0);
+  }
+}
+
+static void launch(int index) {
+  if (index < 0 || index >= radCount) return;
+  usbSerial.printf("o%d\n", index);
+  uiLauncherClose();
+  uiFlash(LV_SYMBOL_OK);
+}
+
+static void onTileLongPress(lv_event_t *) {
+  if (!radCount || uiAskVisible() || radOpen) return;
+  radOpen = true;
+  radLast = millis();
+  refreshLauncher();
+  lv_obj_clear_flag(radPanel, LV_OBJ_FLAG_HIDDEN);
+  startAnim(radPanel, opaExec, 0, 255, 200, lv_anim_path_ease_out);
+  uiWake();
 }
 
 static void buildDashTile(lv_obj_t *t) {
@@ -450,6 +564,9 @@ static void buildAskPanel() {
 
 static void refreshAsk() {
   uint32_t col = askColors[askIndex];
+  // Libellés longs (noms de sorties audio) : police plus petite pour tenir dans le rond.
+  lv_obj_set_style_text_font(askChoice, strlen(askLabels[askIndex]) > 8 ? &lv_font_montserrat_20
+                                                                          : &lv_font_montserrat_28, 0);
   lv_label_set_text_fmt(askChoice, LV_SYMBOL_LEFT "  %s  " LV_SYMBOL_RIGHT, askLabels[askIndex]);
   lv_obj_set_style_text_color(askChoice, lv_color_hex(col), 0);
   lv_obj_set_style_arc_color(askRing, lv_color_hex(col), LV_PART_INDICATOR);
@@ -475,7 +592,10 @@ void uiBegin() {
   buildVolumeTile(tiles[TILE_VOL]);
   buildDashTile(tiles[TILE_DASH]);
   buildNetTile(tiles[TILE_NET]);
+  buildSystemTile(tiles[TILE_SYS]);
   buildHueTile(tiles[TILE_HUE]);
+  // Appui long sur n'importe quelle tuile : lanceur radial.
+  for (int i = 0; i < TILE_COUNT; i++) lv_obj_add_event_cb(tiles[i], onTileLongPress, LV_EVENT_LONG_PRESSED, NULL);
 
   // --- Éléments fixes : indicateur de page, état USB
   for (int i = 0; i < TILE_COUNT; i++) {
@@ -494,7 +614,8 @@ void uiBegin() {
   lv_label_set_text(flashLabel, "");
 
   buildNotifPanel();
-  buildAskPanel();
+  buildLauncher();
+  buildAskPanel();  // au-dessus de tout : une permission passe devant le lanceur
 
   refreshDots();
   refreshVolume();
@@ -774,6 +895,82 @@ void uiSetNet(int downPermille, const char *downText, int upPermille, const char
   lv_chart_set_next_value(netChart, netUpSeries, upPermille);
 }
 
+// ---------- Système
+
+static void setGauge(int i, int value, int lo, int hi, const char *text) {
+  if (value < 0) {
+    lv_label_set_text(sysVal[i], "--");
+    animArcTo(sysArc[i], 0);
+    return;
+  }
+  lv_label_set_text(sysVal[i], text);
+  animArcTo(sysArc[i], 270 * constrain(value - lo, 0, hi - lo) / (hi - lo));
+}
+
+void uiSetSystem(int cpu, int gpu, int ram, int gpuTemp) {
+  char buf[8];
+  sysCpu = cpu;
+  snprintf(buf, sizeof buf, "%d%%", cpu);
+  setGauge(0, cpu, 0, 100, buf);
+  snprintf(buf, sizeof buf, "%d%%", gpu);
+  setGauge(1, gpu, 0, 100, buf);
+  snprintf(buf, sizeof buf, "%d%%", ram);
+  setGauge(2, ram, 0, 100, buf);
+  snprintf(buf, sizeof buf, "%d", gpuTemp);
+  setGauge(3, gpuTemp, 30, 95, buf);
+  uint32_t tcol = gpuTemp >= 83 ? COL_MUTE : gpuTemp >= 70 ? 0xFFB020 : 0x3DDC84;
+  lv_obj_set_style_arc_color(sysArc[3], lv_color_hex(tcol), LV_PART_INDICATOR);
+}
+
+void uiSetAudioDevice(const char *name) {
+  if (strcmp(lv_label_get_text(volDevice), name)) lv_label_set_text(volDevice, name);
+}
+
+// ---------- Lanceur radial
+
+void uiLauncherReset(int count) {
+  radCount = constrain(count, 0, RAD_MAX);
+  radIndex = 0;
+  for (int i = 0; i < RAD_MAX; i++) {
+    lv_obj_add_flag(radImg[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(radSym[i], LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+void uiLauncherSet(int index, const char *label, uint32_t rgb, const char *symbol) {
+  if (index < 0 || index >= RAD_MAX) return;
+  strlcpy(radLabels[index], label, sizeof radLabels[index]);
+  radColors[index] = rgb;
+  lv_label_set_text(radSym[index], symbol);
+  lv_obj_set_style_text_color(radSym[index], lv_color_hex(rgb), 0);
+}
+
+void uiLauncherIcon(int index, const lv_img_dsc_t *icon) {
+  if (index < 0 || index >= RAD_MAX) return;
+  lv_img_cache_invalidate_src(icon);
+  lv_img_set_src(radImg[index], icon);
+  lv_obj_clear_flag(radImg[index], LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(radSym[index], LV_OBJ_FLAG_HIDDEN);
+}
+
+bool uiLauncherVisible() { return radOpen; }
+int uiLauncherIndex() { return radIndex; }
+
+void uiLauncherRotate(int steps) {
+  if (!radOpen || !radCount) return;
+  radIndex = ((radIndex + (steps > 0 ? 1 : -1)) % radCount + radCount) % radCount;
+  radLast = millis();
+  refreshLauncher();
+}
+
+static void radialHidden(lv_anim_t *) { lv_obj_add_flag(radPanel, LV_OBJ_FLAG_HIDDEN); }
+
+void uiLauncherClose() {
+  if (!radOpen) return;
+  radOpen = false;
+  startAnim(radPanel, opaExec, 255, 0, 180, lv_anim_path_ease_in, 0, radialHidden);
+}
+
 // ---------- Hue
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint) {
@@ -843,6 +1040,10 @@ static void tickLeds() {
     color = COL_DOWN;
     count = max(1, (netDownPermille * 5 + 999) / 1000);
     bright = 50 + ledFlash / 3;
+  } else if (t == TILE_SYS) {
+    color = sysCpu >= 85 ? COL_MUTE : 0x22D3EE;
+    count = max(1, (sysCpu * 5 + 99) / 100);
+    bright = 50 + ledFlash / 3;
   } else if (t == TILE_HUE) {
     color = hueColor;
     count = (huePermille * 5 + 999) / 1000;
@@ -868,6 +1069,7 @@ void uiTick() {
   if ((t == TILE_VOL || t == TILE_HUE) && !sleepClock && lv_disp_get_inactive_time(NULL) > AUTO_RETURN_MS)
     goTile(TILE_APP, true);
   if (notifUntil && now > notifUntil) uiNotifyDismiss();
+  if (radOpen && now - radLast > 12000) uiLauncherClose();
   if (lv_disp_get_inactive_time(NULL) < 200) uiWake();  // toucher l'écran réveille aussi
   tickClock();
   tickBacklight();

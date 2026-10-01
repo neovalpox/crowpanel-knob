@@ -1,5 +1,5 @@
 // Interface LVGL. Tuiles, de gauche à droite :
-//   application (couleur/icône de la fenêtre active) | volume | tableau de bord | réseau | Hue
+//   application (couleur/icône de la fenêtre active) | volume | tableau de bord | réseau | système | Hue
 // On glisse vers la gauche pour passer à la tuile suivante.
 #pragma once
 #include <lvgl.h>
@@ -8,7 +8,7 @@
 // MEDIA : pochette + titre/artiste + avancement du morceau.
 // PROGRESS : jauge pilotée par le PC (impression 3D, statut Claude...).
 enum AppMode { MODE_MASTER, MODE_APPVOL, MODE_SCROLL, MODE_MEDIA, MODE_PROGRESS };
-enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_HUE };
+enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_SYS, TILE_HUE };
 
 void uiBegin();
 void uiTick();  // LEDs, horloge, veille, alertes, retour auto sur la tuile application
@@ -54,6 +54,21 @@ void uiAskClose();
 
 // Réseau : jauges (pour mille, échelle log calculée par le PC) + débits formatés.
 void uiSetNet(int downPermille, const char *downText, int upPermille, const char *upText);
+
+// Système : charges en % (-1 = indisponible) et température GPU en °C.
+void uiSetSystem(int cpu, int gpu, int ram, int gpuTemp);
+
+// Sortie audio affichée sous le volume.
+void uiSetAudioDevice(const char *name);
+
+// Lanceur radial (appui long sur l'écran) : jusqu'à 8 raccourcis.
+void uiLauncherReset(int count);
+void uiLauncherSet(int index, const char *label, uint32_t rgb, const char *symbol);
+void uiLauncherIcon(int index, const lv_img_dsc_t *icon);
+bool uiLauncherVisible();
+void uiLauncherRotate(int steps);
+int uiLauncherIndex();
+void uiLauncherClose();
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
 

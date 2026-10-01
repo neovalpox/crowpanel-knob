@@ -16,10 +16,14 @@
 //                  "Z<rétroéclairage> <leds 0|1> <horloge 0|1>"  veille
 //                  "J<w> <h> <len>" + octets RGB565 LE  image caméra ; "j" la masque
 //                  "Y<nom>\t<pour mille>\t<valeur>\t<rrggbb>\t<indice>"  tuile Hue
+//                  "G<cpu>	<gpu>	<ram>	<temp gpu>"  tuile système (-1 = indisponible)
+//                  "D<nom>"                             sortie audio courante
+//                  "O#<n>" puis "O<i>	<libellé>	<rrggbb>	<symbole>"  lanceur radial
+//                  "o<i> <w> <h> <len>" + octets         icône du raccourci i (RGB565 + alpha)
 //                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
 //                  "X<id>\t<titre>\t<détail>\t<LIB,rrggbb|...>"  question à choix ; "x<id>" la ferme
 //   module -> PC : "H" (bonjour), "Q<tuile>", "R<crans>", "C" (clic), "L" (appui long),
-//                  "x<id> <index>" (réponse, -1 = rendre la main au terminal)
+//                  "x<id> <index>" (réponse, -1 = rendre la main au terminal), "o<i>" (raccourci lancé)
 #include <Arduino.h>
 #include "USBHIDConsumerControl.h"
 #include "hw.h"
@@ -44,6 +48,12 @@ static bool iconPending = false;
 static uint8_t camData[CAM_SIZE * CAM_SIZE * 2];
 static lv_img_dsc_t camDsc;
 
+// Icônes du lanceur radial
+#define RAD_MAX 8
+#define RAD_ICON 32
+static uint8_t radIconData[RAD_MAX][RAD_ICON * RAD_ICON * 3];
+static lv_img_dsc_t radIconDsc[RAD_MAX];
+
 static bool readExact(uint8_t *dst, int len) {
   int got = 0;
   unsigned long t0 = millis();
@@ -66,6 +76,19 @@ static void receiveIcon(int w, int h, int len) {
   d.data_size = len;
   d.data = dst;
   iconPending = true;
+}
+
+static void receiveLauncherIcon(int idx, int w, int h, int len) {
+  if (idx < 0 || idx >= RAD_MAX || w != RAD_ICON || h != RAD_ICON || len != (int)sizeof radIconData[0]) return;
+  if (!readExact(radIconData[idx], len)) return;
+  lv_img_dsc_t &d = radIconDsc[idx];
+  memset(&d, 0, sizeof d);
+  d.header.cf = LV_IMG_CF_TRUE_COLOR_ALPHA;
+  d.header.w = w;
+  d.header.h = h;
+  d.data_size = len;
+  d.data = radIconData[idx];
+  uiLauncherIcon(idx, &d);
 }
 
 static void receiveCamera(int w, int h, int len) {
@@ -166,6 +189,26 @@ static void handleLine(char *s) {
       if (sscanf(s, "Z%d %d %d", &bl, &leds, &clock) == 3) uiSetSleep(bl, leds != 0, clock != 0);
       break;
     }
+    case 'G': {
+      int cpu, gpu, ram, temp;
+      if (sscanf(s, "G%d %d %d %d", &cpu, &gpu, &ram, &temp) == 4) uiSetSystem(cpu, gpu, ram, temp);
+      break;
+    }
+    case 'D':
+      uiSetAudioDevice(s + 1);
+      break;
+    case 'O':
+      if (s[1] == '#') {
+        uiLauncherReset(atoi(s + 2));
+      } else if (splitFields(s + 1, f, 4) == 4) {
+        uiLauncherSet(atoi(f[0]), f[1], strtoul(f[2], nullptr, 16), f[3]);
+      }
+      break;
+    case 'o': {
+      int idx;
+      if (sscanf(s, "o%d %d %d %d", &idx, &w, &h, &len) == 4) receiveLauncherIcon(idx, w, h, len);
+      break;
+    }
     case 'B':
       if (splitFields(s + 1, f, 4) == 4) uiSetNet(atoi(f[0]), f[1], atoi(f[2]), f[3]);
       break;
@@ -203,6 +246,19 @@ static void pollLink() {
 
 static void handleKnob() {
   int steps = hwTakeEncoderSteps();
+  // Lanceur radial ouvert : la molette choisit, le clic lance, l'appui long ferme.
+  if (uiLauncherVisible()) {
+    if (steps) uiLauncherRotate(steps);
+    ButtonEvent b = hwPollButton();
+    if (b == BTN_CLICK) {
+      usbSerial.printf("o%d\n", uiLauncherIndex());
+      uiLauncherClose();
+      uiFlash(LV_SYMBOL_OK);
+    } else if (b == BTN_LONG) {
+      uiLauncherClose();
+    }
+    return;
+  }
   // Une question est affichée : la molette lui appartient.
   if (uiAskVisible()) {
     if (steps) {
@@ -235,6 +291,7 @@ static void handleKnob() {
     uiNotifyDismiss();
   } else if (uiTile() == TILE_VOL || !synced) {
     if (b == BTN_CLICK) hwSendMediaKey(CONSUMER_CONTROL_MUTE);
+    else if (synced) usbSerial.print("L\n");  // appui long : choix de la sortie audio
   } else {
     usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
   }

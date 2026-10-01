@@ -35,7 +35,10 @@ import bambu
 import camera
 import dashboard
 import hue
+import audio_out
+import launcher
 import media
+import sysmon
 import netspeed
 import permissions
 import server
@@ -209,9 +212,9 @@ def accent_from_icon(img):
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-def icon_payload(img):
+def icon_payload(img, size=ICON_SIZE):
     """RGBA -> RGB565 little-endian + alpha (format LV_IMG_CF_TRUE_COLOR_ALPHA)."""
-    img = img.resize((ICON_SIZE, ICON_SIZE), Image.LANCZOS)
+    img = img.resize((size, size), Image.LANCZOS)
     px = np.asarray(img).astype(np.uint16)
     r, g, b, a = px[..., 0], px[..., 1], px[..., 2], px[..., 3]
     c = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
@@ -338,7 +341,8 @@ def app_sessions(exe_name):
 
 # ---------------------------------------------------------------- Widgets
 
-TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_HUE = range(5)  # ordre des tuiles du firmware
+TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_SYS, TILE_HUE = range(6)  # ordre des tuiles du firmware
+AUDIO_ASK_BASE = 100000  # ids des questions « sortie audio » (distincts des permissions Claude)
 
 
 class LASTINPUTINFO(ctypes.Structure):
@@ -417,6 +421,13 @@ class Companion:
         self.last_perm = 0
         self.net = netspeed.NetSpeed()
         self.last_net = 0
+        self.sysmon = sysmon.SysMon()
+        self.alert_times = {}
+        self.audio_choices = None
+        self.audio_ask_id = AUDIO_ASK_BASE
+        self.launcher_items = None
+        self.launcher_mtime = 0
+        self.launcher_icons = {}
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
@@ -445,6 +456,7 @@ class Companion:
         self.sent = {}
         self.last_clock = 0
         self.ask_shown = None
+        self.launcher_mtime = 0  # renvoie le lanceur au module (re)connecté
         self.rx = b""
         log.info("connecté sur %s", port)
         return True
@@ -803,6 +815,70 @@ class Companion:
     def request_reload(self):
         self.reload_requested = True
 
+    # --- moniteur système
+    def push_system(self):
+        self.send(self.sysmon.message())
+        s = self.sysmon.snapshot()
+        now = time.monotonic()
+        if s["gpu_temp"] >= 85 and now - self.alert_times.get("gpu", -1e9) > 600:
+            self.alert_times["gpu"] = now
+            self.notify(SYM_WARN, "GPU tres chaud", f"{s['gpu_temp']} degres", COL_ERR)
+        if s["ram"] >= 92 and now - self.alert_times.get("ram", -1e9) > 600:
+            self.alert_times["ram"] = now
+            self.notify(SYM_WARN, "Memoire presque pleine", f"RAM a {s['ram']}%", COL_WARN)
+
+    # --- sortie audio (appui long sur la tuile volume)
+    def push_audio_device(self):
+        self.send_once("D", f"D{ascii_text(audio_out.current()[1], 20)}\n")
+
+    def ask_audio(self):
+        self.audio_choices = audio_out.outputs()
+        if not self.audio_choices:
+            return
+        self.audio_ask_id += 1
+        cur = audio_out.current()[1]
+        opts = "|".join(f"{ascii_text(name, 15)},{audio_out.PALETTE[i % 8]}"
+                        for i, (_, name) in enumerate(self.audio_choices))
+        self.send(f"X{self.audio_ask_id}\tSortie audio\tactuelle : {ascii_text(cur, 30)}\t{opts}\n")
+
+    def on_audio_choice(self, rid, idx):
+        if rid != self.audio_ask_id or not self.audio_choices or not 0 <= idx < len(self.audio_choices):
+            return
+        dev_id, name = self.audio_choices[idx]
+        audio_out.set_default(dev_id)
+        self.ev = None  # le volume général suit la nouvelle sortie
+        self.sent.pop("D", None)
+        self.notify("", "Sortie audio", name, audio_out.PALETTE[idx % 8])
+        log.info("sortie audio -> %s", name)
+
+    # --- lanceur radial
+    def push_launcher(self, force=False):
+        try:
+            mtime = launcher.CONFIG.stat().st_mtime
+        except OSError:
+            mtime = 0
+        if not force and mtime == self.launcher_mtime:
+            return
+        self.launcher_items = launcher.load_items()
+        self.launcher_mtime = launcher.CONFIG.stat().st_mtime
+        items = self.launcher_items
+        self.send(f"O#{len(items)}\n")
+        for i, it in enumerate(items):
+            sym = launcher.SYMBOLS.get(it.get("symbol", ""), launcher.SYMBOLS["ok"])
+            self.send(f"O{i}\t{ascii_text(it.get('label', '?'), 12)}\t{it.get('color', '22D3EE')}\t{sym}\n")
+            path = it.get("icon")
+            if path:
+                if path not in self.launcher_icons:
+                    img = load_exe_icon(path)
+                    self.launcher_icons[path] = icon_payload(img, 32) if img else None
+                payload = self.launcher_icons[path]
+                if payload:
+                    self.send(f"o{i} 32 32 {len(payload)}\n".encode() + payload)
+
+    def launch(self, idx):
+        if self.launcher_items and 0 <= idx < len(self.launcher_items):
+            launcher.run(self.launcher_items[idx], press_combo, lambda: user32.LockWorkStation())
+
     # --- Hue
     def push_hue(self):
         name, permille, value, color, hint = self.hue.view()
@@ -879,6 +955,9 @@ class Companion:
             log.debug("module : %s", msg)
             if msg[0] == "x":
                 rid, idx = msg[1:].split()
+                if int(rid) >= AUDIO_ASK_BASE:
+                    self.on_audio_choice(int(rid), int(idx))
+                    continue
                 self.permissions.answer(int(rid), int(idx))
                 if self.ask_shown == int(rid):
                     self.ask_shown = None
@@ -894,7 +973,11 @@ class Companion:
                 else:
                     self.hue.next_group()
                 self.push_hue()
-            elif self.tile in (TILE_DASH, TILE_NET):
+            elif msg[0] == "o":
+                self.launch(int(msg[1:]))
+            elif self.tile == TILE_VOL and msg == "L":
+                self.ask_audio()
+            elif self.tile in (TILE_DASH, TILE_NET, TILE_SYS, TILE_VOL):
                 pass  # tuiles d'affichage : rien à piloter
             elif msg[0] == "R":
                 self.on_rotate(int(msg[1:]))
@@ -943,6 +1026,9 @@ class Companion:
             self.guarded(self.push_dashboard)
             self.guarded(self.push_sleep)
             self.guarded(self.check_alerts)
+            self.guarded(self.push_system)
+            self.guarded(self.push_audio_device)
+            self.guarded(self.push_launcher)
         self.guarded(self.push_camera)
         if now - self.last_net > 0.5:
             self.last_net = now
