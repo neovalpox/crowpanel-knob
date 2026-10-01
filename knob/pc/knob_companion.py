@@ -28,11 +28,17 @@ from PIL import Image, ImageDraw, ImageFont
 from serial.tools import list_ports
 from pycaw.pycaw import AudioUtilities
 
+import base64
+import io
+
 import bambu
 import camera
 import dashboard
 import hue
 import media
+import permissions
+import server
+import tray
 
 HERE = Path(__file__).resolve().parent
 VID_ESPRESSIF = 0x303A
@@ -407,6 +413,15 @@ class Companion:
         self.last_slow = 0
         self.last_clock = 0
         self.last_hue = 0
+        self.last_perm = 0
+        self.recent = {}           # apps vues au premier plan (éditeur de profils)
+        self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
+        self.reload_requested = False
+        self.ask_shown = None      # id de la demande de permission affichée
+        self.permissions = permissions.Permissions(
+            lambda: (self.app or {}).get("exe", "").lower() == "windowsterminal.exe")
+        server.start(self)
+        self.tray = tray.Tray(self, f"http://127.0.0.1:{server.PORT}/", HERE / "knob_companion.log")
 
     # --- liaison série
     def connect(self):
@@ -426,6 +441,7 @@ class Companion:
         self.app_key = None
         self.sent = {}
         self.last_clock = 0
+        self.ask_shown = None
         self.rx = b""
         log.info("connecté sur %s", port)
         return True
@@ -482,6 +498,10 @@ class Companion:
             if img is None:
                 img = monogram(name, color)
             self.icon_cache[cache_key] = (icon_payload(img), color)
+            buf = io.BytesIO()
+            img.resize((48, 48), Image.LANCZOS).save(buf, "PNG")
+            self.png_cache[exe_name.lower()] = (
+                "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(), "#" + hex_color(color))
         payload, color = self.icon_cache[cache_key]
 
         widget = prof.get("widget")
@@ -515,6 +535,8 @@ class Companion:
             self.mode_override = None
             self.set_camera(False)
             self.push_app(fg)
+            exe = "_desktop" if fg == "desktop" else fg[1].lower()
+            self.recent[exe] = self.app["name"]
 
     def push_appvol(self):
         if not self.app or self.app["knob"] != "appvol":
@@ -723,6 +745,61 @@ class Companion:
                     self.notify(SYM_PAUSE, "Impression en pause", p["name"], COL_WARN)
             self.bambu_prev[p["serial"]] = cur
 
+    # --- permissions Claude Code (répondues à la molette)
+    def push_permission(self):
+        try:
+            sessions = json.loads(CLAUDE_STATUS.read_text(encoding="utf-8"))
+        except Exception:
+            sessions = {}
+        self.permissions.expire(sessions)
+        req = self.permissions.current()
+        if req and req.id != self.ask_shown:
+            opts = "|".join(f"{label},{color}" for label, _, color in req.options)
+            self.send(f"X{req.id}\t{ascii_text('Claude - ' + req.project, 24)}\t"
+                      f"{ascii_text(req.detail, 70)}\t{opts}\n")
+            self.ask_shown = req.id
+        elif not req and self.ask_shown:
+            self.send(f"x{self.ask_shown}\n")
+            self.ask_shown = None
+
+    # --- éditeur de profils (serveur local)
+    def editor_state(self):
+        overrides = {}
+        try:
+            overrides = {k.lower(): v for k, v in
+                         json.loads((HERE / "profiles.json").read_text(encoding="utf-8")).items()
+                         if not k.startswith("_exemple")}
+        except Exception:
+            pass
+        defaults = {k.lower(): v for k, v in DEFAULT_PROFILES.items()}
+        special = {"_default": "Par defaut (autres apps)", "_desktop": "Bureau"}
+        apps = []
+        for exe in sorted(set(defaults) | set(overrides) | set(self.recent)):
+            prof = overrides.get(exe) or defaults.get(exe) or {}
+            icon, color = self.png_cache.get("desktop" if exe == "_desktop" else exe, (None, "#22D3EE"))
+            name = special.get(exe) or prof.get("name") or self.recent.get(exe) or Path(exe).stem.capitalize()
+            apps.append({"exe": exe, "name": name, "icon": icon, "color": color,
+                         "hasProfile": exe in defaults or exe in overrides})
+        actions = [[a, ACTION_LABELS.get(a, a).capitalize()] for a in
+                   ("playpause", "next", "prev", "mute", "appmute", "toggle:appvol", "bambu:camera", "bambu:next")]
+        actions += [[k, v.capitalize()] for k, v in ACTION_LABELS.items() if k.startswith("key:")]
+        current = None
+        if self.app_key == "desktop":
+            current = "_desktop"
+        elif self.app_key:
+            current = self.app_key[1].lower()
+        return {"defaults": defaults, "overrides": overrides, "apps": apps, "options": {"actions": actions},
+                "current": current, "connected": self.ser is not None,
+                "port": self.ser.port if self.ser else None}
+
+    def save_overrides(self, overrides):
+        clean = {k.lower(): v for k, v in overrides.items() if isinstance(v, dict)}
+        (HERE / "profiles.json").write_text(json.dumps(clean, indent=2, ensure_ascii=False), encoding="utf-8")
+        log.info("profils enregistrés depuis l'éditeur (%d surcharges)", len(clean))
+
+    def request_reload(self):
+        self.reload_requested = True
+
     # --- Hue
     def push_hue(self):
         name, permille, value, color, hint = self.hue.view()
@@ -797,7 +874,12 @@ class Companion:
             if not msg:
                 continue
             log.debug("module : %s", msg)
-            if msg[0] == "Q":
+            if msg[0] == "x":
+                rid, idx = msg[1:].split()
+                self.permissions.answer(int(rid), int(idx))
+                if self.ask_shown == int(rid):
+                    self.ask_shown = None
+            elif msg[0] == "Q":
                 self.tile = int(msg[1:] or 0)
             elif msg[0] == "M":
                 log.info("module : %s octets de tas libres", msg[1:])
@@ -828,8 +910,9 @@ class Companion:
             mtime = path.stat().st_mtime
         except OSError:
             return
-        if mtime != self.profiles_mtime:
+        if mtime != self.profiles_mtime or self.reload_requested:
             self.profiles_mtime = mtime
+            self.reload_requested = False
             self.profiles = load_profiles()
             self.icon_cache.clear()
             if self.app_key:
@@ -858,6 +941,9 @@ class Companion:
             self.guarded(self.push_sleep)
             self.guarded(self.check_alerts)
         self.guarded(self.push_camera)
+        if now - self.last_perm > 0.2:
+            self.last_perm = now
+            self.guarded(self.push_permission)
 
     def guarded(self, fn):
         """Une erreur dans un widget ne doit jamais couper la liaison."""
@@ -872,6 +958,7 @@ class Companion:
         comtypes.CoInitialize()
         while True:
             try:
+                self.tray.set_connected(self.ser is not None)
                 if self.ser is None and not self.connect():
                     time.sleep(1)
                     continue

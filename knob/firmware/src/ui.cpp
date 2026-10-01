@@ -52,6 +52,13 @@ static lv_obj_t *notifPanel, *notifRing, *notifSym, *notifTitle, *notifSub;
 static unsigned long notifUntil = 0;
 static uint32_t notifColor = 0;
 
+// Question à choix
+#define ASK_MAX_OPTS 4
+static lv_obj_t *askPanel, *askRing, *askTitle, *askDetail, *askChoice, *askHint;
+static char askLabels[ASK_MAX_OPTS][16];
+static uint32_t askColors[ASK_MAX_OPTS];
+static int askCount = 0, askIndex = 0, askId = -1;
+
 // Veille
 static uint8_t sleepBacklight = BACKLIGHT_MAX;
 static bool sleepLeds = true, sleepClock = false;
@@ -373,6 +380,38 @@ static void buildNotifPanel() {
   lv_obj_add_flag(notifPanel, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void buildAskPanel() {
+  askPanel = makeCircle(lv_layer_top(), 240);
+  lv_obj_center(askPanel);
+  lv_obj_set_style_bg_color(askPanel, lv_color_hex(0x05060A), 0);
+  lv_obj_set_style_bg_opa(askPanel, 250, 0);
+  lv_obj_add_flag(askPanel, LV_OBJ_FLAG_CLICKABLE);  // bloque les gestes vers les tuiles
+
+  askRing = makeArc(askPanel, 6);
+  lv_arc_set_rotation(askRing, 0);
+  lv_arc_set_bg_angles(askRing, 0, 360);
+  lv_arc_set_angles(askRing, 0, 360);
+  lv_obj_t *sym = makeLabel(askPanel, &lv_font_montserrat_28, 0xFFB020, -78);
+  lv_label_set_text(sym, LV_SYMBOL_WARNING);
+  askTitle = makeLabel(askPanel, &lv_font_montserrat_14, COL_DIM, -48);
+  limitWidth(askTitle, 170);
+  askDetail = makeLabel(askPanel, &lv_font_montserrat_14, COL_TEXT, -12);
+  limitWidth(askDetail, 176, LV_LABEL_LONG_WRAP);
+  lv_obj_set_height(askDetail, 52);  // 3 lignes max
+  askChoice = makeLabel(askPanel, &lv_font_montserrat_28, COL_TEXT, 42);
+  askHint = makeLabel(askPanel, &lv_font_montserrat_14, COL_DIM, 78);
+  lv_label_set_text(askHint, "tourner  -  clic : valider");
+  lv_obj_add_flag(askPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void refreshAsk() {
+  uint32_t col = askColors[askIndex];
+  lv_label_set_text_fmt(askChoice, LV_SYMBOL_LEFT "  %s  " LV_SYMBOL_RIGHT, askLabels[askIndex]);
+  lv_obj_set_style_text_color(askChoice, lv_color_hex(col), 0);
+  lv_obj_set_style_arc_color(askRing, lv_color_hex(col), LV_PART_INDICATOR);
+  startAnim(askChoice, opaExec, 90, 255, 160, lv_anim_path_ease_out);
+}
+
 // ---------- API
 
 void uiBegin() {
@@ -410,6 +449,7 @@ void uiBegin() {
   lv_label_set_text(flashLabel, "");
 
   buildNotifPanel();
+  buildAskPanel();
 
   refreshDots();
   refreshVolume();
@@ -542,6 +582,56 @@ void uiNotifyDismiss() {
   if (!notifUntil) return;
   notifUntil = 0;
   startAnim(notifPanel, opaExec, 255, 0, 250, lv_anim_path_ease_in, 0, notifHidden);
+}
+
+// ---------- Question à choix
+
+void uiAsk(int id, const char *title, const char *detail, const char *options) {
+  askCount = 0;
+  const char *p = options;
+  while (*p && askCount < ASK_MAX_OPTS) {
+    const char *comma = strchr(p, ',');
+    if (!comma) break;
+    int n = min((int)(comma - p), (int)sizeof askLabels[0] - 1);
+    memcpy(askLabels[askCount], p, n);
+    askLabels[askCount][n] = 0;
+    askColors[askCount] = strtoul(comma + 1, nullptr, 16);
+    askCount++;
+    p = strchr(comma, '|');
+    if (!p) break;
+    p++;
+  }
+  if (!askCount) return;
+  askId = id;
+  askIndex = 0;
+  lv_label_set_text(askTitle, title);
+  lv_label_set_text(askDetail, detail);
+  refreshAsk();
+  if (lv_obj_has_flag(askPanel, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_clear_flag(askPanel, LV_OBJ_FLAG_HIDDEN);
+    startAnim(askPanel, opaExec, 0, 255, 220, lv_anim_path_ease_out);
+  }
+  uiWake();
+}
+
+bool uiAskVisible() { return askId >= 0; }
+int uiAskId() { return askId; }
+int uiAskIndex() { return askIndex; }
+
+void uiAskRotate(int steps) {
+  if (askId < 0) return;
+  int next = constrain(askIndex + (steps > 0 ? 1 : -1), 0, askCount - 1);
+  if (next == askIndex) return;
+  askIndex = next;
+  refreshAsk();
+}
+
+static void askHidden(lv_anim_t *) { lv_obj_add_flag(askPanel, LV_OBJ_FLAG_HIDDEN); }
+
+void uiAskClose() {
+  if (askId < 0) return;
+  askId = -1;
+  startAnim(askPanel, opaExec, 255, 0, 200, lv_anim_path_ease_in, 0, askHidden);
 }
 
 // ---------- Tableau de bord
@@ -679,7 +769,10 @@ static void tickLeds() {
   uint32_t color = 0;
   uint8_t count = 5, bright = 0;
   Tile t = uiTile();
-  if (notifUntil) {
+  if (askId >= 0) {
+    color = askColors[askIndex];  // pulsation rapide dans la couleur du choix courant
+    bright = 40 + (uint8_t)(110 * (0.5f + 0.5f * sinf(now / 160.0f)));
+  } else if (notifUntil) {
     color = notifColor;  // clignote, même la nuit : c'est une alerte
     bright = (now / 220) % 2 ? 170 : 15;
   } else if (!sleepLeds && now >= wakeUntil) {

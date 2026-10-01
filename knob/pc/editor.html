@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Profils CrowPanel Knob</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #07080b; --panel: #0f1116; --panel-2: #151820; --line: #232733;
+    --text: #f2f4f8; --dim: #7c8494; --accent: #22d3ee; --danger: #ff4d5e; --ok: #3ddc84;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  header .logo { width: 26px; height: 26px; border-radius: 50%; border: 4px solid var(--accent);
+    box-shadow: 0 0 16px #22d3ee55; display: grid; place-items: center; }
+  header .logo::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+  header .sub { color: var(--dim); font-size: 13px; margin-left: auto; }
+  main { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 63px); }
+  @media (max-width: 820px) { main { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
+
+  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .search { padding: 14px; border-bottom: 1px solid var(--line); }
+  .search input { width: 100%; }
+  .list { overflow: auto; flex: 1; padding: 6px; }
+  .app { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 10px;
+    cursor: pointer; border: 1px solid transparent; }
+  .app:hover { background: var(--panel); }
+  .app.sel { background: var(--panel-2); border-color: var(--line); }
+  .app img, .app .mono { width: 30px; height: 30px; border-radius: 8px; flex: none; }
+  .app .mono { display: grid; place-items: center; font-weight: 700; color: #fff; }
+  .app .meta { min-width: 0; flex: 1; }
+  .app .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app .exe { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #22d3ee22; color: var(--accent); }
+  .group { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; padding: 12px 10px 4px; }
+
+  section.editor { padding: 28px; display: grid; grid-template-columns: 280px minmax(0, 520px); gap: 36px; align-content: start; }
+  @media (max-width: 1100px) { section.editor { grid-template-columns: 1fr; } }
+
+  /* Aperçu du module */
+  .knob { width: 260px; height: 260px; border-radius: 50%; padding: 12px; margin: 0 auto;
+    background: radial-gradient(circle at 50% 40%, #1b1f28, #090a0e 70%);
+    box-shadow: 0 0 0 10px #2a2e38, 0 0 0 12px #3a3f4a, 0 18px 50px #000a; position: relative; }
+  .screen { width: 100%; height: 100%; border-radius: 50%; background: #000; position: relative; overflow: hidden; }
+  .screen svg { position: absolute; inset: 0; }
+  .screen .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; padding-top: 44px; }
+  .halo { width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; }
+  .halo img { width: 60px; height: 60px; }
+  .screen .pname { margin-top: 14px; font-weight: 600; font-size: 16px; max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .screen .pval { font-size: 15px; margin-top: 4px; }
+  .screen .phint { color: var(--dim); font-size: 11.5px; margin-top: 6px; max-width: 150px; text-align: center; }
+  .legend { margin-top: 22px; color: var(--dim); font-size: 13px; text-align: center; }
+
+  form { display: grid; gap: 16px; }
+  .field { display: grid; gap: 6px; align-content: start; }
+  .field > span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  input, select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; }
+  input:focus, select:focus { border-color: var(--accent); }
+  input[type=color] { padding: 2px; height: 38px; width: 64px; }
+  .inline { display: flex; align-items: center; gap: 10px; }
+  .hidden { display: none !important; }
+  .actions { display: flex; gap: 10px; margin-top: 6px; }
+  button { font: inherit; border-radius: 10px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); }
+  button.primary { background: var(--accent); color: #031317; border-color: transparent; font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .4; cursor: default; }
+  .help { color: var(--dim); font-size: 12.5px; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0;
+    background: var(--panel-2); border: 1px solid var(--line); padding: 10px 18px; border-radius: 99px;
+    transition: .25s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  h2 { margin: 0 0 4px; font-size: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"></div>
+  <h1>CrowPanel Knob · Profils</h1>
+  <span class="sub" id="status">Chargement…</span>
+</header>
+<main>
+  <aside>
+    <div class="search"><input id="q" placeholder="Rechercher une app…" autocomplete="off"></div>
+    <div class="list" id="list"></div>
+  </aside>
+  <section class="editor">
+    <div>
+      <div class="knob"><div class="screen">
+        <svg viewBox="0 0 236 236"><circle cx="118" cy="118" r="108" fill="none" stroke="#1a1d24" stroke-width="12"
+          stroke-dasharray="509 679" transform="rotate(135 118 118)" stroke-linecap="round"/>
+          <circle id="arc" cx="118" cy="118" r="108" fill="none" stroke="#22d3ee" stroke-width="12"
+          stroke-dasharray="320 679" transform="rotate(135 118 118)" stroke-linecap="round"/></svg>
+        <div class="center">
+          <div class="halo" id="halo"><img id="picon" alt=""></div>
+          <div class="pname" id="pname">—</div>
+          <div class="pval" id="pval"></div>
+          <div class="phint" id="phint"></div>
+        </div>
+      </div></div>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <form id="form" autocomplete="off">
+      <div><h2 id="title">Choisis une app</h2><div class="help" id="exe"></div></div>
+      <label class="field"><span>Nom affiché</span><input id="f-name" placeholder="Nom de l'app (auto si vide)"></label>
+      <div class="field"><span>Couleur</span>
+        <div class="inline"><label class="inline"><input type="checkbox" id="f-color-auto"> auto (tirée de l'icône)</label>
+          <input type="color" id="f-color"></div></div>
+      <label class="field"><span>Widget</span><select id="f-widget"></select></label>
+      <label class="field"><span>Molette</span><select id="f-knob"></select></label>
+      <div class="row" id="keys-row">
+        <label class="field"><span>Cran horaire</span><input id="f-cw" placeholder="ex. ctrl+tab"></label>
+        <label class="field"><span>Cran anti-horaire</span><input id="f-ccw" placeholder="ex. ctrl+shift+tab"></label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Clic</span><select id="f-click"></select>
+          <input id="f-click-key" class="hidden" placeholder="ex. ctrl+s"></label>
+        <label class="field"><span>Appui long</span><select id="f-long"></select>
+          <input id="f-long-key" class="hidden" placeholder="ex. ctrl+shift+p"></label>
+      </div>
+      <p class="help">Touches : combinaisons avec <code>+</code> (ctrl, shift, alt, win, tab, enter, esc, up, down,
+        left, right, pgup, pgdn, home, end, f5, lettres, chiffres, « . » et « , »).</p>
+      <div class="actions">
+        <button type="submit" class="primary" id="save" disabled>Enregistrer</button>
+        <button type="button" class="danger" id="reset" disabled>Revenir au profil par défaut</button>
+      </div>
+    </form>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = null, current = null;
+
+const KNOB_LABELS = { auto: "Auto (volume de l'app si elle joue du son)", appvol: "Volume de l'app",
+  master: "Volume général", scroll: "Défilement", keys: "Touches à chaque cran", media: "Pistes (widget média)" };
+const WIDGETS = { "": "Aucun", media: "Média (titre, pochette)", bambu: "Imprimantes Bambu", claude: "Statut Claude Code" };
+
+async function api(path, body) {
+  const opts = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Knob": "1" },
+                        body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+function effective(exe) {
+  return { ...(state.overrides[exe] || state.defaults[exe] || {}) };
+}
+
+function fillSelect(sel, entries) {
+  sel.innerHTML = entries.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+}
+
+function iconHtml(app) {
+  if (app.icon) return `<img src="${app.icon}" alt="">`;
+  return `<div class="mono" style="background:${app.color}">${(app.name || "?")[0].toUpperCase()}</div>`;
+}
+
+function renderList() {
+  const q = $("q").value.toLowerCase();
+  const match = a => !q || a.name.toLowerCase().includes(q) || a.exe.includes(q);
+  const groups = [["Spécial", state.apps.filter(a => a.exe.startsWith("_"))],
+                  ["Avec profil", state.apps.filter(a => !a.exe.startsWith("_") && a.hasProfile)],
+                  ["Vues récemment", state.apps.filter(a => !a.hasProfile && !a.exe.startsWith("_"))]];
+  $("list").innerHTML = groups.map(([label, apps]) => {
+    apps = apps.filter(match);
+    if (!apps.length) return "";
+    return `<div class="group">${label}</div>` + apps.map(a => `
+      <div class="app ${current === a.exe ? "sel" : ""}" data-exe="${a.exe}">
+        ${iconHtml(a)}
+        <div class="meta"><div class="name">${a.name}</div><div class="exe">${a.exe}</div></div>
+        ${state.overrides[a.exe] ? '<span class="badge">perso</span>' : ""}
+      </div>`).join("");
+  }).join("");
+  document.querySelectorAll(".app").forEach(el => el.onclick = () => select(el.dataset.exe));
+}
+
+function setAction(prefix, value) {
+  const sel = $(`f-${prefix}`), key = $(`f-${prefix}-key`);
+  const known = state.options.actions.some(([v]) => v === (value ?? ""));
+  if (value && value.startsWith("key:") && !known) { sel.value = "key:"; key.value = value.slice(4); }
+  else { sel.value = value ?? ""; key.value = ""; }
+  key.classList.toggle("hidden", sel.value !== "key:");
+}
+
+function getAction(prefix) {
+  const v = $(`f-${prefix}`).value;
+  if (v === "key:") { const k = $(`f-${prefix}-key`).value.trim(); return k ? "key:" + k : null; }
+  return v || null;
+}
+
+function select(exe) {
+  current = exe;
+  const app = state.apps.find(a => a.exe === exe);
+  const p = effective(exe);
+  $("title").textContent = app.name;
+  $("exe").textContent = exe.startsWith("_") ? (exe === "_default" ? "Utilisé pour toute app sans profil" : "Bureau Windows") : exe;
+  $("f-name").value = p.name || "";
+  $("f-color-auto").checked = !p.color;
+  $("f-color").value = "#" + (p.color || app.color.slice(1));
+  $("f-widget").value = p.widget || "";
+  $("f-knob").value = p.knob || (p.widget === "media" ? "media" : "auto");
+  $("f-cw").value = p.cw || ""; $("f-ccw").value = p.ccw || "";
+  setAction("click", p.click); setAction("long", p.long);
+  $("save").disabled = false;
+  $("reset").disabled = !state.overrides[exe];
+  renderList(); updatePreview();
+}
+
+function collect() {
+  const p = {};
+  const name = $("f-name").value.trim(); if (name) p.name = name;
+  if (!$("f-color-auto").checked) p.color = $("f-color").value.slice(1).toUpperCase();
+  const widget = $("f-widget").value; if (widget) p.widget = widget;
+  const knob = $("f-knob").value;
+  if (knob !== "media") p.knob = knob;
+  if (widget === "media") p.media_source = (effective(current).media_source || current.replace(".exe", ""));
+  if (knob === "keys") { p.cw = $("f-cw").value.trim(); p.ccw = $("f-ccw").value.trim(); }
+  p.click = getAction("click"); p.long = getAction("long");
+  return p;
+}
+
+function labelOf(action) {
+  if (!action) return "";
+  const found = state.options.actions.find(([v]) => v === action);
+  return found ? found[1].toLowerCase() : action.replace("key:", "");
+}
+
+function updatePreview() {
+  if (!current) return;
+  const app = state.apps.find(a => a.exe === current);
+  const p = collect();
+  const color = p.color ? "#" + p.color : app.color;
+  $("arc").setAttribute("stroke", color);
+  $("halo").style.background = color + "33";
+  $("halo").style.boxShadow = `0 0 26px ${color}88`;
+  $("picon").src = app.icon || "";
+  $("picon").style.visibility = app.icon ? "visible" : "hidden";
+  $("pname").textContent = p.name || app.name;
+  const knob = $("f-knob").value;
+  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", master: "42%", appvol: "42%", auto: "42%" }[knob];
+  $("pval").style.color = color;
+  $("phint").textContent = p.click ? "clic : " + labelOf(p.click) : "";
+  $("keys-row").classList.toggle("hidden", knob !== "keys");
+  $("legend").innerHTML = `Tourner : <b>${KNOB_LABELS[knob]}</b><br>Clic : <b>${labelOf(p.click) || "rien"}</b>
+    · Appui long : <b>${labelOf(p.long) || "rien"}</b>`;
+}
+
+async function save(e) {
+  e.preventDefault();
+  if (!current) return;
+  state.overrides[current] = collect();
+  await api("/api/profiles", { overrides: state.overrides });
+  const app = state.apps.find(a => a.exe === current); app.hasProfile = true;
+  $("reset").disabled = false; renderList(); toast("Profil enregistré — appliqué tout de suite");
+}
+
+async function reset() {
+  delete state.overrides[current];
+  await api("/api/profiles", { overrides: state.overrides });
+  select(current); toast("Profil par défaut rétabli");
+}
+
+async function load() {
+  state = await api("/api/state");
+  fillSelect($("f-knob"), Object.entries(KNOB_LABELS));
+  fillSelect($("f-widget"), Object.entries(WIDGETS));
+  for (const id of ["f-click", "f-long"])
+    fillSelect($(id), [["", "Rien"], ...state.options.actions, ["key:", "Touche personnalisée…"]]);
+  $("status").textContent = state.connected ? `Module connecté (${state.port})` : "Module non connecté";
+  renderList();
+  select(state.current && state.apps.some(a => a.exe === state.current) ? state.current : "_default");
+}
+
+$("q").oninput = renderList;
+$("form").onsubmit = save;
+$("reset").onclick = reset;
+$("form").oninput = updatePreview;
+for (const p of ["click", "long"])
+  $(`f-${p}`).addEventListener("change", () => $(`f-${p}-key`).classList.toggle("hidden", $(`f-${p}`).value !== "key:"));
+load().catch(e => { $("status").textContent = "Compagnon injoignable (" + e.message + ")"; });
+</script>
+</body>
+</html>

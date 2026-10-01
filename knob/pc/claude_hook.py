@@ -14,6 +14,8 @@ STATUS = Path.home() / ".claude" / "knob_status.json"
 STATE_BY_EVENT = {
     "UserPromptSubmit": "working",
     "PreToolUse": "working",
+    "PostToolUse": "working",          # permission accordée (molette ou terminal)
+    "PostToolUseFailure": "working",
     "PermissionRequest": "waiting",
     "Stop": "done",
 }

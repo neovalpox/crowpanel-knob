@@ -29,6 +29,14 @@ extraite de l'icône, et une molette qui fait ce qu'il faut selon l'app.
   d'inactivité, quasi éteint et LEDs coupées la nuit ; molette ou toucher = réveil.
 - **Caméra Bambu** (X1 / H2D) : appui long dans Bambu Studio, image ronde à 3 i/s dans
   l'anneau de progression (ffmpeg requis).
+- **Permissions Claude Code à la molette** : quand Claude demande une permission et que le
+  terminal n'est pas au premier plan, la question s'affiche sur le module (OUI / TOUJOURS /
+  NON / TERMINAL) ; molette pour choisir, clic pour valider, appui long = rendre la main au
+  terminal. Si tu réponds dans le terminal ou y passes, la question se ferme toute seule.
+  Hook `claude_permission.py` (PermissionRequest, synchrone) + `claude_hook.py` (statut).
+- **Icône dans la zone de notification** : état de la liaison, éditeur de profils, journal, quitter.
+- **Éditeur de profils** (http://127.0.0.1:47615/) : aperçu du rendu sur le module, molette /
+  clic / appui long / couleur / widget par app, appliqué à chaud.
 - **Profils par app** (Chrome, Discord, Outlook, Teams, Telegram, WhatsApp, Mattermost…),
   surchargeables à chaud dans `knob/pc/profiles.json`.
 - Sans PC, le module reste un bouton de volume USB HID autonome.
@@ -67,7 +75,7 @@ Ajuster `upload_port` dans `platformio.ini` (port COM du module).
 ```powershell
 cd knob/pc
 python -m venv .venv
-.venv\Scripts\python -m pip install pycaw pyserial psutil pillow numpy icoextract pywin32 "paho-mqtt>=2" `
+.venv\Scripts\python -m pip install pycaw pyserial psutil pillow numpy icoextract pywin32 pystray "paho-mqtt>=2" `
     winrt-runtime winrt-Windows.Media.Control winrt-Windows.Foundation `
     winrt-Windows.Foundation.Collections winrt-Windows.Storage.Streams
 .venv\Scripts\pythonw knob_companion.py

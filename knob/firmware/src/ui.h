@@ -43,6 +43,15 @@ void uiWake();  // interaction locale : plein écran quelques secondes
 void uiShowCamera(const lv_img_dsc_t *frame);
 void uiHideCamera();
 
+// Question à choix (permission Claude) : la molette choisit, le clic valide.
+// options : "LIBELLE,RRGGBB|LIBELLE,RRGGBB|..."
+void uiAsk(int id, const char *title, const char *detail, const char *options);
+bool uiAskVisible();
+int uiAskId();
+int uiAskIndex();
+void uiAskRotate(int steps);
+void uiAskClose();
+
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
 
 Tile uiTile();

@@ -17,3 +17,4 @@ pc-sync/
 mount/ref/
 mount/tools/
 knob/pc/hue.json
+.playwright-mcp/
