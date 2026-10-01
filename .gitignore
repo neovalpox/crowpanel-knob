@@ -1,0 +1,18 @@
+# Build / environnements
+.pio/
+.venv/
+__pycache__/
+*.pyc
+
+# Données locales
+*.log
+knob/pc/profiles.json
+factory_backup_*.bin
+
+# Spikes jetables
+spike-volume/
+pc-sync/
+
+# Références téléchargées / outils du support 3D
+mount/ref/
+mount/tools/
