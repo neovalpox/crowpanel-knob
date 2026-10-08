@@ -42,6 +42,7 @@ import launcher
 import media
 import meeting
 import settings
+import spectrum
 import sysmon
 import netspeed
 import permissions
@@ -275,8 +276,8 @@ DEFAULT_PROFILES = {
     # ignore : la fenêtre ne change pas l'écran (on garde l'app précédente).
     "explorer.exe": {"name": "Explorateur", "ignore": True, "knob": "scroll", "click": "key:alt+up", "long": None},
     "spotify.exe": {"name": "Spotify", "widget": "media", "media_source": "spotify",
-                    "click": "playpause", "long": "toggle:appvol"},
-    "vlc.exe": {"name": "VLC", "widget": "media", "media_source": "vlc", "click": "playpause", "long": "toggle:appvol"},
+                    "click": "playpause", "long": "media:lock"},
+    "vlc.exe": {"name": "VLC", "widget": "media", "media_source": "vlc", "click": "playpause", "long": "media:lock"},
     "chrome.exe": TAB_PROFILE | {"ignore": True}, "msedge.exe": TAB_PROFILE, "firefox.exe": TAB_PROFILE,
     "brave.exe": TAB_PROFILE, "opera.exe": TAB_PROFILE,
     "discord.exe": {"name": "Discord", "knob": "appvol", "click": "key:ctrl+shift+m", "long": "appmute"},
@@ -316,7 +317,7 @@ ACTION_LABELS = {
     "key:ctrl+shift+m": "mute micro", "key:alt+up": "dossier parent", "key:enter": "entree",
     "key:ctrl+r": "trancher", "key:ctrl+shift+o": "nouveau chat", "key:esc": "echap",
     "key:ctrl+k": "recherche", "key:ctrl+q": "marquer lu", "toggle:appvol": "volume",
-    "local": "defaut de la tuile", "app": "comme l'app", "audio": "sortie audio",
+    "local": "defaut de la tuile", "app": "comme l'app", "audio": "sortie audio", "media:lock": "mode dedie",
 }
 KNOB_LABELS = {"scroll": "defiler", "appvol": "volume app", "master": "volume", "media": "pistes"}
 TILE_PROFILES = {1: "_tile_volume", 2: "_tile_dashboard", 3: "_tile_network", 4: "_tile_system"}  # Q -> profil
@@ -449,6 +450,12 @@ class Companion:
         self.settings = settings.load()
         self.meeting_state = 0
         self.updating = False
+        self.locked = None         # mode dédié média verrouillé (dict) ou None
+        self.spectrum = spectrum.Spectrum()
+        self.spec_seq = 0
+        self.last_spec = 0
+        self.last_lock_info = 0
+        self.lock_sent = {}
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
@@ -480,6 +487,10 @@ class Companion:
         self.launcher_mtime = 0  # renvoie le lanceur au module (re)connecté
         self.last_fg = None
         self.app = None
+        self.lock_sent = {}
+        if self.locked:  # le module a redémarré : on remet la vue dédiée
+            self.ser = ser
+            self.send("e1\n")
         self.rx = b""
         log.info("connecté sur %s", port)
         return True
@@ -574,6 +585,8 @@ class Companion:
         self.last_fg = fg
         exe = "_desktop" if fg == "desktop" else fg[1].lower()
         self.fg_exe = exe
+        if self.locked:
+            return  # mode dédié verrouillé : l'écran ne suit plus les fenêtres
         if self.profile_for(fg, exe).get("ignore") and self.app is not None:
             self.recent.setdefault(exe, self.profiles.get(exe, {}).get("name") or Path(exe).stem.capitalize())
             return  # fenêtre ignorée : l'écran garde l'app précédente
@@ -772,6 +785,74 @@ class Companion:
         self.send_once("m", f"m{st}\t{ascii_text(label, 26)}\n")
 
     # --- réglages (éditeur) et écran d'accueil
+    # --- mode dédié média (verrouillage sur Spotify & co.)
+    def media_skip(self, steps, source):
+        now = time.monotonic()
+        if now - self.last_skip < 0.3:  # un cran = une piste, même en tournant vite
+            return
+        self.last_skip = now
+        sid, _ = self.media.find(source)
+        ok = sid and (self.media.next(sid) if steps > 0 else self.media.prev(sid))
+        if not ok:
+            press_combo("next" if steps > 0 else "prev")
+        self.send(f"F{SYM_NEXT if steps > 0 else SYM_PREV}\n")
+
+    def lock_media(self):
+        if not self.app:
+            return
+        source = self.app["profile"].get("media_source") or Path(self.app["exe"]).stem
+        self.locked = {"source": source, "name": self.app["name"], "color": hex_color(self.app["color"]),
+                       "payload": self.app["payload"]}
+        self.lock_sent = {}
+        self.send("e1\n")
+        self.spectrum.start(audio_out.current()[1])
+        self.push_locked()
+        log.info("mode dédié verrouillé sur %s", self.locked["name"])
+
+    def unlock_media(self):
+        self.locked = None
+        self.spectrum.stop()
+        self.send("e0\n")
+        log.info("mode dédié déverrouillé")
+        self.last_fg = None  # réaffiche l'app au premier plan au prochain passage
+        if self.app_key:
+            self.push_app(self.app_key)
+
+    def push_locked(self):
+        """Pochette, titre, artiste, avancement et état de lecture pour la vue dédiée."""
+        lk = self.locked
+        sid, snap = self.media.find(lk["source"])
+        if not snap or not snap["title"]:
+            info = (lk["name"], "rien en lecture", lk["color"], 0, 0)
+            cover_key, payload = "app", lk["payload"]
+        else:
+            dur = snap["duration"]
+            permille = int(1000 * self.media.live_position(snap) / dur) if dur else 0
+            cover_key, payload, color = "app", lk["payload"], lk["color"]
+            if snap["thumb"]:
+                h = hashlib.md5(snap["thumb"]).hexdigest()
+                if h not in self.cover_cache:
+                    img = media.thumb_image(snap["thumb"])
+                    self.cover_cache[h] = ((icon_payload(round_cover(img)), hex_color(accent_from_icon(img)))
+                                           if img else None)
+                if self.cover_cache[h]:
+                    cover_key, (payload, color) = h, self.cover_cache[h]
+            info = (ascii_text(snap["title"], 60), ascii_text(snap["artist"], 40), color, permille,
+                    int(snap["playing"]))
+        if cover_key != self.lock_sent.get("cover"):
+            self.send(f"I{ICON_SIZE} {ICON_SIZE} {len(payload)}\n".encode() + payload)
+            self.send("u\n")
+            self.lock_sent["cover"] = cover_key
+        msg = "k{}\t{}\t{}\t{}\t{}\n".format(*info)
+        if msg != self.lock_sent.get("info"):
+            self.send(msg)
+            self.lock_sent["info"] = msg
+
+    def push_spectrum(self):
+        if self.spectrum.frame and self.spectrum.seq != self.spec_seq:
+            self.spec_seq = self.spectrum.seq
+            self.send(self.spectrum.frame)
+
     # --- molette / clic / appui long sur les tuiles (profils _tile_*)
     def tile_profile(self, tile):
         return self.profiles.get(TILE_PROFILES[tile], {})
@@ -929,7 +1010,7 @@ class Companion:
                          "hasProfile": exe in defaults or exe in overrides, "seen": exe in self.recent})
         actions = [[a, ACTION_LABELS.get(a, a).capitalize()] for a in
                    ("playpause", "next", "prev", "mute", "appmute", "toggle:appvol", "bambu:camera", "bambu:next",
-                    "local", "app", "audio")]
+                    "local", "app", "audio", "media:lock")]
         actions += [[k, v.capitalize()] for k, v in ACTION_LABELS.items() if k.startswith("key:")]
         current = None
         if self.app_key == "desktop":
@@ -1042,6 +1123,8 @@ class Companion:
                 s.SetMute(0 if s.GetMute() else 1, None)
         elif action == "bambu:next":
             self.bambu_sel += 1
+        elif action == "media:lock":
+            self.lock_media() if not self.locked else self.unlock_media()
         elif action == "bambu:camera":
             self.set_camera(not self.cam_on)
 
@@ -1051,15 +1134,7 @@ class Companion:
             return
         knob = app["knob"]
         if knob == "media":
-            now = time.monotonic()
-            if now - self.last_skip < 0.3:  # un cran = une piste, même en tournant vite
-                return
-            self.last_skip = now
-            sid, _ = self.media_session()
-            ok = sid and (self.media.next(sid) if steps > 0 else self.media.prev(sid))
-            if not ok:
-                press_combo("next" if steps > 0 else "prev")
-            self.send(f"F{SYM_NEXT if steps > 0 else SYM_PREV}\n")
+            self.media_skip(steps, self.app["profile"].get("media_source") or Path(self.app["exe"]).stem)
         elif knob == "keys":
             combo = app["profile"].get("cw" if steps > 0 else "ccw")
             for _ in range(min(abs(steps), 5)):
@@ -1095,6 +1170,16 @@ class Companion:
                 self.permissions.answer(int(rid), int(idx))
                 if self.ask_shown == int(rid):
                     self.ask_shown = None
+            elif self.locked and msg[0] in "RCL":
+                # Mode dédié : molette = pistes, clic = lecture/pause, appui long = déverrouiller.
+                if msg[0] == "R":
+                    self.media_skip(int(msg[1:]), self.locked["source"])
+                elif msg == "C":
+                    sid, _ = self.media.find(self.locked["source"])
+                    if not (sid and self.media.toggle(sid)):
+                        press_combo("playpause")
+                else:
+                    self.unlock_media()
             elif msg[0] == "Q":
                 self.tile = int(msg[1:] or 0)
             elif msg[0] == "M":
@@ -1165,6 +1250,13 @@ class Companion:
             self.guarded(self.push_tile_config)
             self.guarded(self.push_meeting)
         self.guarded(self.push_camera)
+        if self.locked:
+            if now - self.last_spec > 0.033:  # ~30 images/s
+                self.last_spec = now
+                self.guarded(self.push_spectrum)
+            if now - self.last_lock_info > 0.5:
+                self.last_lock_info = now
+                self.guarded(self.push_locked)
         if now - self.last_net > 0.5:
             self.last_net = now
             self.guarded(lambda: self.send(self.net.message()))

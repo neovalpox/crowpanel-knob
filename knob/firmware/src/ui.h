@@ -84,6 +84,14 @@ void uiHistoryClose();
 // Réunion : 0 = aucune, 1 = micro ouvert, 2 = micro coupé ; label = nom de l'app.
 void uiSetMeeting(int state, const char *label);
 
+// Mode dédié média (Spotify verrouillé) : pochette au centre, spectre animé autour,
+// titre/artiste, avancement. Par-dessus les tuiles ; alertes et questions restent devant.
+void uiMediaLock(bool on);
+bool uiMediaLocked();
+void uiMediaInfo(const char *title, const char *artist, uint32_t rgb, int permille, bool playing);
+void uiMediaCover(const lv_img_dsc_t *cover);
+void uiSetSpectrum(const uint8_t *bands, int count, int bass);  // bandes 0..63
+
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
 
 Tile uiTile();

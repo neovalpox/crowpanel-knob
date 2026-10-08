@@ -51,6 +51,17 @@ static lv_obj_t *netDownArc, *netUpArc, *netDown, *netUp, *netChart;
 static lv_chart_series_t *netDownSeries, *netUpSeries;
 static int netDownPermille = 0;
 
+// Mode dédié média : spectre circulaire (24 bandes en miroir = 48 barres) autour de la pochette
+#define SPEC_BANDS 24
+#define SPEC_INNER 46   // rayon de départ des barres (pochette de 72 px au centre)
+#define SPEC_LEN 40     // longueur max d'une barre
+#define SPEC_CY -18     // centre vertical de la pochette et du spectre
+static lv_obj_t *mediaPanel, *mediaBars, *mediaCover, *mediaHalo, *mediaArc, *mediaTitle, *mediaArtist, *mediaPause;
+static uint8_t specBands[SPEC_BANDS];
+static uint8_t specBass = 0;
+static uint32_t mediaColor = 0x1ED760;
+static bool mediaLocked = false;
+
 // Système : 4 jauges (CPU, GPU, RAM, température GPU)
 static lv_obj_t *sysArc[4], *sysVal[4];
 static int sysCpu = 0;
@@ -597,6 +608,70 @@ static void refreshAsk() {
   startAnim(askChoice, opaExec, 90, 255, 160, lv_anim_path_ease_out);
 }
 
+// Dessin du spectre : 48 traits partant du bord de la pochette, plus clairs quand ils sont hauts.
+static void drawSpectrum(lv_event_t *e) {
+  lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
+  lv_obj_t *obj = lv_event_get_target(e);
+  lv_area_t a;
+  lv_obj_get_coords(obj, &a);
+  int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+  lv_draw_line_dsc_t d;
+  lv_draw_line_dsc_init(&d);
+  d.width = 4;
+  d.round_start = d.round_end = 1;
+  const int bars = SPEC_BANDS * 2;
+  for (int i = 0; i < bars; i++) {
+    int band = i < SPEC_BANDS ? i : bars - 1 - i;  // miroir gauche/droite, basses en haut
+    int level = specBands[band];
+    float ang = (-90.0f + (i + 0.5f) * 360.0f / bars) * PI / 180.0f;
+    float r0 = SPEC_INNER, r1 = SPEC_INNER + 3 + SPEC_LEN * level / 63.0f;
+    lv_point_t p1 = {(lv_coord_t)(cx + r0 * cosf(ang)), (lv_coord_t)(cy + r0 * sinf(ang))};
+    lv_point_t p2 = {(lv_coord_t)(cx + r1 * cosf(ang)), (lv_coord_t)(cy + r1 * sinf(ang))};
+    d.color = lv_color_mix(lv_color_white(), lv_color_hex(mediaColor), level * 3);
+    d.opa = 110 + level * 2;
+    lv_draw_line(ctx, &d, &p1, &p2);
+  }
+}
+
+static void buildMediaPanel() {
+  mediaPanel = makeCircle(lv_layer_top(), 240);
+  lv_obj_center(mediaPanel);
+  lv_obj_set_style_bg_color(mediaPanel, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(mediaPanel, LV_OPA_COVER, 0);
+  lv_obj_add_flag(mediaPanel, LV_OBJ_FLAG_CLICKABLE);  // bloque les gestes vers les tuiles
+
+  mediaArc = makeArc(mediaPanel, 4);  // avancement du morceau, tout autour
+  lv_arc_set_rotation(mediaArc, 270);
+  lv_arc_set_bg_angles(mediaArc, 0, 360);
+  lv_obj_set_size(mediaArc, 234, 234);
+  lv_obj_center(mediaArc);
+
+  int span = 2 * (SPEC_INNER + SPEC_LEN + 6);
+  mediaBars = lv_obj_create(mediaPanel);
+  lv_obj_set_size(mediaBars, span, span);
+  lv_obj_align(mediaBars, LV_ALIGN_CENTER, 0, SPEC_CY);
+  makeTransparent(mediaBars);
+  lv_obj_clear_flag(mediaBars, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(mediaBars, drawSpectrum, LV_EVENT_DRAW_MAIN, NULL);
+
+  mediaHalo = makeCircle(mediaPanel, 76);
+  lv_obj_align(mediaHalo, LV_ALIGN_CENTER, 0, SPEC_CY);
+  lv_obj_set_style_bg_opa(mediaHalo, 0, 0);
+  lv_obj_set_style_shadow_opa(mediaHalo, 170, 0);
+  mediaCover = lv_img_create(mediaPanel);
+  lv_obj_align(mediaCover, LV_ALIGN_CENTER, 0, SPEC_CY);
+  lv_img_set_antialias(mediaCover, true);
+  mediaPause = makeLabel(mediaPanel, &lv_font_montserrat_28, COL_TEXT, SPEC_CY);
+  lv_label_set_text(mediaPause, LV_SYMBOL_PAUSE);
+  lv_obj_add_flag(mediaPause, LV_OBJ_FLAG_HIDDEN);
+
+  mediaTitle = makeLabel(mediaPanel, &lv_font_montserrat_20, COL_TEXT, 76);
+  limitWidth(mediaTitle, 150, LV_LABEL_LONG_SCROLL_CIRCULAR);
+  mediaArtist = makeLabel(mediaPanel, &lv_font_montserrat_14, 0xB8BFCC, 98);
+  limitWidth(mediaArtist, 120);
+  lv_obj_add_flag(mediaPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
 // Définies plus bas (historique, gestes de la tuile volume).
 static void buildHistoryPanel();
 static void onVolumeGesture(lv_event_t *);
@@ -657,6 +732,8 @@ void uiBegin() {
   lv_obj_set_style_text_color(meetLabel, lv_color_hex(COL_TEXT), 0);
   lv_label_set_text(meetLabel, "");
   lv_obj_add_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
+
+  buildMediaPanel();  // sous le symbole géant, les alertes et les questions
 
   // Symbole géant par-dessus tout (piste suivante, etc.)
   flashLabel = lv_label_create(lv_layer_top());
@@ -1194,6 +1271,58 @@ void uiLauncherClose() {
   startAnim(radPanel, opaExec, 255, 0, 180, lv_anim_path_ease_in, 0, radialHidden);
 }
 
+// ---------- Mode dédié média
+
+void uiMediaLock(bool on) {
+  if (on == mediaLocked) return;
+  mediaLocked = on;
+  if (on) {
+    memset(specBands, 0, sizeof specBands);
+    lv_obj_clear_flag(mediaPanel, LV_OBJ_FLAG_HIDDEN);
+    startAnim(mediaPanel, opaExec, 0, 255, 300, lv_anim_path_ease_out);
+    startAnim(mediaCover, zoomExec, 120, 256, 450, lv_anim_path_overshoot);
+    uiWake();
+  } else {
+    lv_obj_add_flag(mediaPanel, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+bool uiMediaLocked() { return mediaLocked; }
+
+void uiMediaInfo(const char *title, const char *artist, uint32_t rgb, int permille, bool playing) {
+  if (strcmp(lv_label_get_text(mediaTitle), title)) lv_label_set_text(mediaTitle, title);
+  if (strcmp(lv_label_get_text(mediaArtist), artist)) lv_label_set_text(mediaArtist, artist);
+  if (rgb != mediaColor) {
+    mediaColor = rgb;
+    lv_obj_set_style_arc_color(mediaArc, lv_color_hex(rgb), LV_PART_INDICATOR);
+    lv_obj_set_style_shadow_color(mediaHalo, lv_color_hex(rgb), 0);
+  }
+  lv_arc_set_angles(mediaArc, 0, 360 * constrain(permille, 0, 1000) / 1000);
+  if (playing) {
+    lv_obj_add_flag(mediaPause, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_img_opa(mediaCover, LV_OPA_COVER, 0);
+  } else {
+    lv_obj_clear_flag(mediaPause, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_img_opa(mediaCover, 110, 0);
+  }
+}
+
+void uiMediaCover(const lv_img_dsc_t *cover) {
+  lv_img_cache_invalidate_src(cover);
+  lv_img_set_src(mediaCover, cover);
+  startAnim(mediaCover, zoomExec, 180, 256, 320, lv_anim_path_ease_out);
+}
+
+void uiSetSpectrum(const uint8_t *bands, int count, int bass) {
+  for (int i = 0; i < SPEC_BANDS && i < count; i++) specBands[i] = min<int>(bands[i], 63);
+  specBass = min(bass, 63);
+  if (!mediaLocked) return;
+  // Le halo de la pochette respire avec les basses.
+  lv_obj_set_style_shadow_width(mediaHalo, 10 + specBass, 0);
+  lv_obj_set_style_shadow_spread(mediaHalo, specBass / 8, 0);
+  lv_obj_invalidate(mediaBars);
+}
+
 // ---------- Hue
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint) {
@@ -1247,7 +1376,11 @@ static void tickLeds() {
   uint32_t color = 0;
   uint8_t count = 5, bright = 0;
   Tile t = uiTile();
-  if (askId >= 0) {
+  if (mediaLocked && askId < 0 && !notifUntil) {
+    // Mode dédié : les LEDs battent avec les basses, dans la couleur de la pochette.
+    color = mediaColor;
+    bright = 12 + specBass * 3;
+  } else if (askId >= 0) {
     color = askColors[askIndex];  // pulsation rapide dans la couleur du choix courant
     bright = 40 + (uint8_t)(110 * (0.5f + 0.5f * sinf(now / 160.0f)));
   } else if (notifUntil) {

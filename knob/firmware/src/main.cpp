@@ -21,6 +21,10 @@
 //                  "O#<n>" puis "O<i>	<libellé>	<rrggbb>	<symbole>"  lanceur radial
 //                  "o<i> <w> <h> <len>" + octets         icône du raccourci i (RGB565 + alpha)
 //                  "Q<tuile> <ms app> <ms autres>"      écran d'accueil et délais de retour
+//                  "e<0|1>"                             mode dédié média (verrouillage)
+//                  "k<titre>\t<artiste>\t<rrggbb>\t<‰>\t<0|1 lecture>"  morceau en mode dédié
+//                  "u"                                  applique l'icône reçue comme pochette du mode dédié
+//                  "v<25 car.>"                         spectre : 24 bandes + basse, '0' + niveau 0..63
 //                  "y<tuile> <masque>"                  molette/clic/appui long gérés par le module (bits 1/2/4)
 //                  "n<symbole>\t<titre>\t<sous-titre>\t<rrggbb>"  alerte silencieuse (historique)
 //                  "m<0|1|2>\t<app>"                    réunion : aucune / micro ouvert / coupé
@@ -212,6 +216,31 @@ static void handleLine(char *s) {
       if (sscanf(s, "Q%d %d %d", &tile, &appMs, &otherMs) == 3) uiSetHome((Tile)tile, appMs, otherMs);
       break;
     }
+    case 'e':
+      uiMediaLock(s[1] == '1');
+      break;
+    case 'k':
+      if (splitFields(s + 1, f, 5) == 5)
+        uiMediaInfo(f[0], f[1], strtoul(f[2], nullptr, 16), atoi(f[3]), f[4][0] == '1');
+      break;
+    case 'u':
+      if (iconPending) {
+        uiMediaCover(&iconDsc[iconBack]);
+        iconBack ^= 1;
+        iconPending = false;
+      }
+      break;
+    case 'v': {
+      // 24 bandes + basse, chacune codée '0' + niveau (0..63).
+      uint8_t bands[24];
+      int n = 0;
+      for (const char *p = s + 1; *p && n < 25; p++, n++) {
+        int level = *p - '0';
+        if (n < 24) bands[n] = constrain(level, 0, 63);
+        else uiSetSpectrum(bands, 24, constrain(level, 0, 63));
+      }
+      break;
+    }
     case 'y': {
       int tile, mask;
       if (sscanf(s, "y%d %d", &tile, &mask) == 2 && tile >= 0 && tile < 8) tileLocal[tile] = mask;
@@ -313,6 +342,19 @@ static void handleKnob() {
       usbSerial.printf("x%d %d\n", uiAskId(), b == BTN_CLICK ? uiAskIndex() : -1);
       uiAskClose();
     }
+    return;
+  }
+  // Mode dédié média : tout part au PC (suivant/précédent, lecture, appui long = déverrouiller).
+  if (uiMediaLocked()) {
+    if (steps) {
+      uiWake();
+      usbSerial.printf("R%d\n", steps);
+    }
+    ButtonEvent b = hwPollButton();
+    if (b == BTN_CLICK && uiNotifyVisible())
+      uiNotifyDismiss();
+    else if (b != BTN_NONE)
+      usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
     return;
   }
   Tile t = uiTile();
