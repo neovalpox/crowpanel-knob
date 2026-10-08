@@ -21,6 +21,7 @@
 //                  "O#<n>" puis "O<i>	<libellé>	<rrggbb>	<symbole>"  lanceur radial
 //                  "o<i> <w> <h> <len>" + octets         icône du raccourci i (RGB565 + alpha)
 //                  "Q<tuile> <ms app> <ms autres>"      écran d'accueil et délais de retour
+//                  "y<tuile> <masque>"                  molette/clic/appui long gérés par le module (bits 1/2/4)
 //                  "n<symbole>\t<titre>\t<sous-titre>\t<rrggbb>"  alerte silencieuse (historique)
 //                  "m<0|1|2>\t<app>"                    réunion : aucune / micro ouvert / coupé
 //                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
@@ -40,6 +41,20 @@ static char line[256];
 static int lineLen = 0;
 static unsigned long lastRx = 0;
 static bool synced = false;
+
+// Par tuile : ce que le module gère lui-même (sinon envoyé au PC, qui applique le profil
+// de la tuile). Bits : molette, clic, appui long. Réglé par le PC ("y<tuile> <masque>").
+#define LOCAL_KNOB 1
+#define LOCAL_CLICK 2
+#define LOCAL_LONG 4
+static uint8_t tileLocal[8] = {
+    0,                         // app : tout passe par le PC (profil de l'app)
+    LOCAL_KNOB | LOCAL_CLICK,  // volume : volume HID + mute ; appui long = choix de sortie (PC)
+    LOCAL_KNOB | LOCAL_CLICK,  // tableau de bord : clic = historique
+    0, 0, 0, 0, 0};
+
+static bool isLocal(Tile t, uint8_t what) { return !synced || (tileLocal[t] & what); }
+
 
 // Double tampon : on reçoit dans l'un pendant que LVGL affiche l'autre.
 static uint8_t iconData[2][ICON_MAX];
@@ -197,6 +212,11 @@ static void handleLine(char *s) {
       if (sscanf(s, "Q%d %d %d", &tile, &appMs, &otherMs) == 3) uiSetHome((Tile)tile, appMs, otherMs);
       break;
     }
+    case 'y': {
+      int tile, mask;
+      if (sscanf(s, "y%d %d", &tile, &mask) == 2 && tile >= 0 && tile < 8) tileLocal[tile] = mask;
+      break;
+    }
     case 'n':
       if (splitFields(s + 1, f, 4) == 4) uiNotifySilent(f[0], f[1], f[2], strtoul(f[3], nullptr, 16));
       break;
@@ -295,12 +315,14 @@ static void handleKnob() {
     }
     return;
   }
+  Tile t = uiTile();
   if (steps != 0) {
     uiKnobFeedback(steps);
-    // Sur la tuile volume, ou sans PC, la molette pilote le volume en HID.
-    if (uiTile() == TILE_VOL || !synced) {
-      for (int i = 0; i < abs(steps); i++)
-        hwSendMediaKey(steps > 0 ? CONSUMER_CONTROL_VOLUME_INCREMENT : CONSUMER_CONTROL_VOLUME_DECREMENT);
+    if (isLocal(t, LOCAL_KNOB)) {
+      // Comportement propre à la tuile : volume HID sur la tuile volume (et sans PC).
+      if (t == TILE_VOL || !synced)
+        for (int i = 0; i < abs(steps); i++)
+          hwSendMediaKey(steps > 0 ? CONSUMER_CONTROL_VOLUME_INCREMENT : CONSUMER_CONTROL_VOLUME_DECREMENT);
     } else {
       usbSerial.printf("R%d\n", steps);  // le PC sait sur quelle tuile on est (Q)
     }
@@ -312,13 +334,15 @@ static void handleKnob() {
   uiWake();
   if (b == BTN_CLICK && uiNotifyVisible()) {
     uiNotifyDismiss();
-  } else if (b == BTN_CLICK && uiTile() == TILE_DASH) {
-    uiHistoryOpen();  // clic sur le tableau de bord : historique des alertes
-  } else if (uiTile() == TILE_VOL || !synced) {
-    if (b == BTN_CLICK) hwSendMediaKey(CONSUMER_CONTROL_MUTE);
-    else if (synced) usbSerial.print("L\n");  // appui long : choix de la sortie audio
-  } else {
+    return;
+  }
+  uint8_t what = b == BTN_CLICK ? LOCAL_CLICK : LOCAL_LONG;
+  if (!isLocal(t, what)) {
     usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
+  } else if (b == BTN_CLICK && (t == TILE_VOL || !synced)) {
+    hwSendMediaKey(CONSUMER_CONTROL_MUTE);
+  } else if (b == BTN_CLICK && t == TILE_DASH) {
+    uiHistoryOpen();  // clic sur le tableau de bord : historique des alertes
   }
 }
 

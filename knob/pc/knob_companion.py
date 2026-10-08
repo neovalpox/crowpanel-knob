@@ -266,6 +266,12 @@ CHAT_PROFILE = {"knob": "keys", "cw": "ctrl+tab", "ccw": "ctrl+shift+tab", "knob
 DEFAULT_PROFILES = {
     "_default": {"knob": "auto", "click": "playpause", "long": "next"},
     "_desktop": {"name": "Bureau", "knob": "master", "click": "mute", "long": "playpause", "color": "22D3EE"},
+    # Tuiles : "local" = comportement propre au module (volume HID, mute, historique…),
+    # "app" = fait ce que ferait l'app au premier plan (son profil).
+    "_tile_volume": {"name": "Tuile Volume", "knob": "local", "click": "local", "long": "audio"},
+    "_tile_dashboard": {"name": "Tuile Tableau de bord", "knob": "none", "click": "local", "long": None},
+    "_tile_network": {"name": "Tuile Reseau", "knob": "none", "click": None, "long": None},
+    "_tile_system": {"name": "Tuile Systeme", "knob": "none", "click": None, "long": None},
     # ignore : la fenêtre ne change pas l'écran (on garde l'app précédente).
     "explorer.exe": {"name": "Explorateur", "ignore": True, "knob": "scroll", "click": "key:alt+up", "long": None},
     "spotify.exe": {"name": "Spotify", "widget": "media", "media_source": "spotify",
@@ -310,8 +316,10 @@ ACTION_LABELS = {
     "key:ctrl+shift+m": "mute micro", "key:alt+up": "dossier parent", "key:enter": "entree",
     "key:ctrl+r": "trancher", "key:ctrl+shift+o": "nouveau chat", "key:esc": "echap",
     "key:ctrl+k": "recherche", "key:ctrl+q": "marquer lu", "toggle:appvol": "volume",
+    "local": "defaut de la tuile", "app": "comme l'app", "audio": "sortie audio",
 }
 KNOB_LABELS = {"scroll": "defiler", "appvol": "volume app", "master": "volume", "media": "pistes"}
+TILE_PROFILES = {1: "_tile_volume", 2: "_tile_dashboard", 3: "_tile_network", 4: "_tile_system"}  # Q -> profil
 
 
 def load_profiles():
@@ -764,6 +772,54 @@ class Companion:
         self.send_once("m", f"m{st}\t{ascii_text(label, 26)}\n")
 
     # --- réglages (éditeur) et écran d'accueil
+    # --- molette / clic / appui long sur les tuiles (profils _tile_*)
+    def tile_profile(self, tile):
+        return self.profiles.get(TILE_PROFILES[tile], {})
+
+    def push_tile_config(self):
+        """Dit au module ce qu'il gère lui-même sur chaque tuile (le reste lui est renvoyé ici)."""
+        for tile in TILE_PROFILES:
+            p = self.tile_profile(tile)
+            mask = (p.get("knob") == "local") * 1 | (p.get("click") == "local") * 2 | (p.get("long") == "local") * 4
+            self.send_once(f"y{tile}", f"y{tile} {mask}\n")
+
+    def tile_event(self, msg):
+        p = self.tile_profile(self.tile)
+        if msg[0] == "R":
+            self.tile_rotate(p, int(msg[1:]))
+        else:
+            which = "click" if msg == "C" else "long"
+            action = p.get(which)
+            if action == "app":
+                if self.app:
+                    self.run_action(self.app["profile"].get(which))
+            elif action == "audio":
+                self.ask_audio()
+            elif action not in (None, "local"):
+                self.run_action(action)
+
+    def tile_rotate(self, p, steps):
+        knob = p.get("knob")
+        if knob == "app":
+            self.on_rotate(steps)  # exactement ce que ferait la molette sur la tuile de l'app
+        elif knob == "scroll":
+            scroll(steps)
+        elif knob == "keys":
+            combo = p.get("cw" if steps > 0 else "ccw")
+            for _ in range(min(abs(steps), 5)):
+                if combo:
+                    press_combo(combo)
+        elif knob == "media":
+            press_combo("next" if steps > 0 else "prev")
+            self.send(f"F{SYM_NEXT if steps > 0 else SYM_PREV}\n")
+        elif knob == "appvol" and self.app:
+            for sess in app_sessions(self.app["exe"]):
+                sess.SetMasterVolume(min(1.0, max(0.0, sess.GetMasterVolume() + VOL_STEP * steps)), None)
+        elif knob == "master":
+            ev = self.endpoint()
+            ev.SetMasterVolumeLevelScalar(min(1.0, max(0.0, ev.GetMasterVolumeLevelScalar() + VOL_STEP * steps)), None)
+            self.push_master()
+
     def push_home(self):
         self.send_once("Q", settings.home_message(self.settings))
 
@@ -861,7 +917,9 @@ class Companion:
         except Exception:
             pass
         defaults = {k.lower(): v for k, v in DEFAULT_PROFILES.items()}
-        special = {"_default": "Par defaut (autres apps)", "_desktop": "Bureau"}
+        special = {"_default": "Par defaut (autres apps)", "_desktop": "Bureau",
+                   "_tile_volume": "Tuile Volume", "_tile_dashboard": "Tuile Tableau de bord",
+                   "_tile_network": "Tuile Reseau", "_tile_system": "Tuile Systeme"}
         apps = []
         for exe in sorted(set(defaults) | set(overrides) | set(self.recent)):
             prof = overrides.get(exe) or defaults.get(exe) or {}
@@ -870,7 +928,8 @@ class Companion:
             apps.append({"exe": exe, "name": name, "icon": icon, "color": color,
                          "hasProfile": exe in defaults or exe in overrides, "seen": exe in self.recent})
         actions = [[a, ACTION_LABELS.get(a, a).capitalize()] for a in
-                   ("playpause", "next", "prev", "mute", "appmute", "toggle:appvol", "bambu:camera", "bambu:next")]
+                   ("playpause", "next", "prev", "mute", "appmute", "toggle:appvol", "bambu:camera", "bambu:next",
+                    "local", "app", "audio")]
         actions += [[k, v.capitalize()] for k, v in ACTION_LABELS.items() if k.startswith("key:")]
         current = None
         if self.app_key == "desktop":
@@ -1050,10 +1109,8 @@ class Companion:
                 self.push_hue()
             elif msg[0] == "o":
                 self.launch(int(msg[1:]))
-            elif self.tile == TILE_VOL and msg == "L":
-                self.ask_audio()
-            elif self.tile in (TILE_DASH, TILE_NET, TILE_SYS, TILE_VOL):
-                pass  # tuiles d'affichage : rien à piloter
+            elif self.tile in TILE_PROFILES and msg[0] in "RCL":
+                self.tile_event(msg)
             elif msg[0] == "R":
                 self.on_rotate(int(msg[1:]))
             elif msg == "C" and self.app:
@@ -1105,6 +1162,7 @@ class Companion:
             self.guarded(self.push_audio_device)
             self.guarded(self.push_launcher)
             self.guarded(self.push_home)
+            self.guarded(self.push_tile_config)
             self.guarded(self.push_meeting)
         self.guarded(self.push_camera)
         if now - self.last_net > 0.5:

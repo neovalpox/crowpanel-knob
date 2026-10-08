@@ -120,12 +120,12 @@
 
     <form id="form" autocomplete="off">
       <div><h2 id="title">Choisis une app</h2><div class="help" id="exe"></div></div>
-      <label class="field"><span>Nom affiché</span><input id="f-name" placeholder="Nom de l'app (auto si vide)"></label>
-      <div class="field"><span>Couleur</span>
+      <label class="field app-only"><span>Nom affiché</span><input id="f-name" placeholder="Nom de l'app (auto si vide)"></label>
+      <div class="field app-only"><span>Couleur</span>
         <div class="inline"><label class="inline"><input type="checkbox" id="f-color-auto"> auto (tirée de l'icône)</label>
           <input type="color" id="f-color"></div></div>
-      <label class="inline"><input type="checkbox" id="f-ignore"> Ne pas changer l'écran quand cette app passe au premier plan</label>
-      <label class="field"><span>Widget</span><select id="f-widget"></select></label>
+      <label class="inline app-only"><input type="checkbox" id="f-ignore"> Ne pas changer l'écran quand cette app passe au premier plan</label>
+      <label class="field app-only"><span>Widget</span><select id="f-widget"></select></label>
       <label class="field"><span>Molette</span><select id="f-knob"></select></label>
       <div class="row" id="keys-row">
         <label class="field"><span>Cran horaire</span><input id="f-cw" placeholder="ex. ctrl+tab"></label>
@@ -175,7 +175,23 @@ const $ = id => document.getElementById(id);
 let state = null, current = null;
 
 const KNOB_LABELS = { auto: "Auto (volume de l'app si elle joue du son)", appvol: "Volume de l'app",
-  master: "Volume général", scroll: "Défilement", keys: "Touches à chaque cran", media: "Pistes (widget média)" };
+  master: "Volume général", scroll: "Défilement", keys: "Touches à chaque cran", media: "Pistes (suivante / précédente)",
+  app: "Comme l'app au premier plan", local: "Défaut de la tuile", none: "Rien" };
+const isTile = exe => exe.startsWith("_tile_");
+const TILE_HELP = { _tile_volume: "Défaut : molette = volume général, clic = couper le son, appui long = sortie audio",
+  _tile_dashboard: "Défaut : clic = historique des alertes", _tile_network: "Tuile d'affichage : rien par défaut",
+  _tile_system: "Tuile d'affichage : rien par défaut" };
+
+function knobChoices(exe) {
+  const keys = isTile(exe) ? ["local", "app", "master", "appvol", "scroll", "keys", "media", "none"]
+                           : ["auto", "appvol", "master", "scroll", "keys", "media", "none"];
+  return keys.map(k => [k, KNOB_LABELS[k]]);
+}
+
+function actionChoices(exe) {
+  const acts = state.options.actions.filter(([v]) => isTile(exe) || !["local", "app"].includes(v));
+  return [["", "Rien"], ...acts, ["key:", "Touche personnalisée…"]];
+}
 const WIDGETS = { "": "Aucun", media: "Média (titre, pochette)", bambu: "Imprimantes Bambu", claude: "Statut Claude Code" };
 
 async function api(path, body) {
@@ -207,7 +223,8 @@ function iconHtml(app) {
 function renderList() {
   const q = $("q").value.toLowerCase();
   const match = a => !q || a.name.toLowerCase().includes(q) || a.exe.includes(q);
-  const groups = [["Spécial", state.apps.filter(a => a.exe.startsWith("_"))],
+  const groups = [["Tuiles du module", state.apps.filter(a => isTile(a.exe))],
+                  ["Spécial", state.apps.filter(a => a.exe.startsWith("_") && !isTile(a.exe))],
                   ["Avec profil", state.apps.filter(a => !a.exe.startsWith("_") && a.hasProfile)],
                   ["Vues récemment", state.apps.filter(a => !a.hasProfile && !a.exe.startsWith("_"))]];
   const settingsItem = `<div class="app ${current === "__settings" ? "sel" : ""}" data-exe="__settings">
@@ -273,13 +290,17 @@ function select(exe) {
   const app = state.apps.find(a => a.exe === exe);
   const p = effective(exe);
   $("title").textContent = app.name;
-  $("exe").textContent = exe.startsWith("_") ? (exe === "_default" ? "Utilisé pour toute app sans profil" : "Bureau Windows") : exe;
+  $("exe").textContent = isTile(exe) ? TILE_HELP[exe] : exe.startsWith("_") ?
+    (exe === "_default" ? "Utilisé pour toute app sans profil" : "Bureau Windows") : exe;
+  document.querySelectorAll(".app-only").forEach(el => el.classList.toggle("hidden", isTile(exe)));
+  fillSelect($("f-knob"), knobChoices(exe));
+  for (const id of ["f-click", "f-long"]) fillSelect($(id), actionChoices(exe));
   $("f-name").value = p.name || "";
   $("f-color-auto").checked = !p.color;
   $("f-color").value = "#" + (p.color || app.color.slice(1));
   $("f-widget").value = p.widget || "";
   $("f-ignore").checked = !!p.ignore;
-  $("f-knob").value = p.knob || (p.widget === "media" ? "media" : "auto");
+  $("f-knob").value = p.knob || (p.widget === "media" ? "media" : isTile(exe) ? "local" : "auto");
   $("f-cw").value = p.cw || ""; $("f-ccw").value = p.ccw || "";
   setAction("click", p.click); setAction("long", p.long);
   $("save").disabled = false;
@@ -289,6 +310,12 @@ function select(exe) {
 
 function collect() {
   const p = {};
+  if (isTile(current)) {
+    p.knob = $("f-knob").value;
+    if (p.knob === "keys") { p.cw = $("f-cw").value.trim(); p.ccw = $("f-ccw").value.trim(); }
+    p.click = getAction("click"); p.long = getAction("long");
+    return p;
+  }
   const name = $("f-name").value.trim(); if (name) p.name = name;
   if (!$("f-color-auto").checked) p.color = $("f-color").value.slice(1).toUpperCase();
   if ($("f-ignore").checked) p.ignore = true;
@@ -319,7 +346,8 @@ function updatePreview() {
   $("picon").style.visibility = app.icon ? "visible" : "hidden";
   $("pname").textContent = p.name || app.name;
   const knob = $("f-knob").value;
-  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", master: "42%", appvol: "42%", auto: "42%" }[knob];
+  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", master: "42%", appvol: "42%", auto: "42%",
+                           local: "42%", app: "▲  ▼", none: "" }[knob] ?? "";
   $("pval").style.color = color;
   $("phint").textContent = p.click ? "clic : " + labelOf(p.click) : "";
   $("keys-row").classList.toggle("hidden", knob !== "keys");
@@ -344,10 +372,7 @@ async function reset() {
 
 async function load() {
   state = await api("/api/state");
-  fillSelect($("f-knob"), Object.entries(KNOB_LABELS));
   fillSelect($("f-widget"), Object.entries(WIDGETS));
-  for (const id of ["f-click", "f-long"])
-    fillSelect($(id), [["", "Rien"], ...state.options.actions, ["key:", "Touche personnalisée…"]]);
   $("status").textContent = state.connected ? `Module connecté (${state.port})` : "Module non connecté";
   renderList();
   select(state.current && state.apps.some(a => a.exe === state.current) ? state.current : "_default");
