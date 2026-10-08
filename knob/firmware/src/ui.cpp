@@ -10,7 +10,8 @@
 #define COL_MASTER 0x22D3EE
 #define COL_HUE 0xFFB547
 #define ARC_SIZE 228
-#define AUTO_RETURN_MS 8000
+#define AUTO_RETURN_MS 8000  // Hue -> volume
+#define APP_RETURN_MS 5000   // app -> volume (le volume est l'écran d'accueil)
 #define NOTIFY_MS 8000
 #define WAKE_MS 15000
 #define BACKLIGHT_MAX 220
@@ -674,7 +675,10 @@ void uiSetApp(const char *name, AppMode mode, uint32_t rgb, const char *hint, co
   startAnim(appIcon, zoomExec, 110, 256, 420, lv_anim_path_overshoot);
   startAnim(halo, sizeExec, 40, 84, 460, lv_anim_path_overshoot);
 
-  if (!sleepClock) goTile(TILE_APP, true);
+  if (!sleepClock) {
+    goTile(TILE_APP, true);
+    lv_disp_trig_activity(NULL);  // le délai de retour au volume part d'ici
+  }
   refreshDots();
   ledFlash = 255;
 }
@@ -849,7 +853,7 @@ void uiSetSleep(uint8_t level, bool leds, bool showClock) {
   sleepBacklight = level;
   sleepLeds = leds;
   if (showClock && !sleepClock) goTile(TILE_DASH, false);
-  if (!showClock && sleepClock) goTile(TILE_APP, true);
+  if (!showClock && sleepClock) goTile(TILE_VOL, true);
   sleepClock = showClock;
 }
 
@@ -1066,8 +1070,16 @@ static void tickLeds() {
 void uiTick() {
   unsigned long now = millis();
   Tile t = uiTile();
-  if ((t == TILE_VOL || t == TILE_HUE) && !sleepClock && lv_disp_get_inactive_time(NULL) > AUTO_RETURN_MS)
-    goTile(TILE_APP, true);
+  // Retour à l'écran d'accueil (volume) sans interaction : app après 5 s (sauf caméra
+  // affichée), Hue après 8 s. Pas pendant la veille, le lanceur ou une question.
+  if (!sleepClock && !radOpen && askId < 0) {
+    uint32_t idle = lv_disp_get_inactive_time(NULL);
+    bool camOn = !lv_obj_has_flag(camBox, LV_OBJ_FLAG_HIDDEN);
+    if (t == TILE_APP && !camOn && idle > APP_RETURN_MS)
+      goTile(TILE_VOL, true);
+    else if (t == TILE_HUE && idle > AUTO_RETURN_MS)
+      goTile(TILE_VOL, true);
+  }
   if (notifUntil && now > notifUntil) uiNotifyDismiss();
   if (radOpen && now - radLast > 12000) uiLauncherClose();
   if (lv_disp_get_inactive_time(NULL) < 200) uiWake();  // toucher l'écran réveille aussi

@@ -119,6 +119,7 @@
       <div class="field"><span>Couleur</span>
         <div class="inline"><label class="inline"><input type="checkbox" id="f-color-auto"> auto (tirée de l'icône)</label>
           <input type="color" id="f-color"></div></div>
+      <label class="inline"><input type="checkbox" id="f-ignore"> Ne pas changer l'écran quand cette app passe au premier plan</label>
       <label class="field"><span>Widget</span><select id="f-widget"></select></label>
       <label class="field"><span>Molette</span><select id="f-knob"></select></label>
       <div class="row" id="keys-row">
@@ -219,6 +220,7 @@ function select(exe) {
   $("f-color-auto").checked = !p.color;
   $("f-color").value = "#" + (p.color || app.color.slice(1));
   $("f-widget").value = p.widget || "";
+  $("f-ignore").checked = !!p.ignore;
   $("f-knob").value = p.knob || (p.widget === "media" ? "media" : "auto");
   $("f-cw").value = p.cw || ""; $("f-ccw").value = p.ccw || "";
   setAction("click", p.click); setAction("long", p.long);
@@ -231,6 +233,7 @@ function collect() {
   const p = {};
   const name = $("f-name").value.trim(); if (name) p.name = name;
   if (!$("f-color-auto").checked) p.color = $("f-color").value.slice(1).toUpperCase();
+  if ($("f-ignore").checked) p.ignore = true;
   const widget = $("f-widget").value; if (widget) p.widget = widget;
   const knob = $("f-knob").value;
   if (knob !== "media") p.knob = knob;

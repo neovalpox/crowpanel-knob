@@ -262,17 +262,18 @@ CHAT_PROFILE = {"knob": "keys", "cw": "ctrl+tab", "ccw": "ctrl+shift+tab", "knob
 DEFAULT_PROFILES = {
     "_default": {"knob": "auto", "click": "playpause", "long": "next"},
     "_desktop": {"name": "Bureau", "knob": "master", "click": "mute", "long": "playpause", "color": "22D3EE"},
-    "explorer.exe": {"name": "Explorateur", "knob": "scroll", "click": "key:alt+up", "long": None},
+    # ignore : la fenêtre ne change pas l'écran (on garde l'app précédente).
+    "explorer.exe": {"name": "Explorateur", "ignore": True, "knob": "scroll", "click": "key:alt+up", "long": None},
     "spotify.exe": {"name": "Spotify", "widget": "media", "media_source": "spotify",
                     "click": "playpause", "long": "toggle:appvol"},
     "vlc.exe": {"name": "VLC", "widget": "media", "media_source": "vlc", "click": "playpause", "long": "toggle:appvol"},
-    "chrome.exe": TAB_PROFILE, "msedge.exe": TAB_PROFILE, "firefox.exe": TAB_PROFILE,
+    "chrome.exe": TAB_PROFILE | {"ignore": True}, "msedge.exe": TAB_PROFILE, "firefox.exe": TAB_PROFILE,
     "brave.exe": TAB_PROFILE, "opera.exe": TAB_PROFILE,
     "discord.exe": {"name": "Discord", "knob": "appvol", "click": "key:ctrl+shift+m", "long": "appmute"},
     "code.exe": {"name": "VS Code", "knob": "scroll", "click": "key:ctrl+s", "long": "key:ctrl+shift+p"},
     "cursor.exe": {"name": "Cursor", "knob": "scroll", "click": "key:ctrl+s", "long": "key:ctrl+shift+p"},
     # Terminal : flèches haut/bas pour naviguer les menus de Claude Code, clic = Entrée.
-    "windowsterminal.exe": {"name": "Terminal", "widget": "claude", "knob": "keys", "cw": "down", "ccw": "up",
+    "windowsterminal.exe": {"name": "Terminal", "ignore": True, "widget": "claude", "knob": "keys", "cw": "down", "ccw": "up",
                             "knob_label": "fleches", "click": "key:enter", "long": "key:esc"},
     "bambu-studio.exe": {"name": "Bambu Studio", "widget": "bambu", "knob": "scroll",
                          "click": "key:ctrl+r", "long": "bambu:camera"},
@@ -419,6 +420,8 @@ class Companion:
         self.last_clock = 0
         self.last_hue = 0
         self.last_perm = 0
+        self.last_fg = None        # dernière fenêtre au premier plan (même ignorée)
+        self.fg_exe = ""
         self.net = netspeed.NetSpeed()
         self.last_net = 0
         self.sysmon = sysmon.SysMon()
@@ -433,7 +436,7 @@ class Companion:
         self.reload_requested = False
         self.ask_shown = None      # id de la demande de permission affichée
         self.permissions = permissions.Permissions(
-            lambda: (self.app or {}).get("exe", "").lower() == "windowsterminal.exe")
+            lambda: self.fg_exe == "windowsterminal.exe")
         server.start(self)
         self.tray = tray.Tray(self, f"http://127.0.0.1:{server.PORT}/", HERE / "knob_companion.log")
 
@@ -457,6 +460,8 @@ class Companion:
         self.last_clock = 0
         self.ask_shown = None
         self.launcher_mtime = 0  # renvoie le lanceur au module (re)connecté
+        self.last_fg = None
+        self.app = None
         self.rx = b""
         log.info("connecté sur %s", port)
         return True
@@ -546,12 +551,18 @@ class Companion:
         fg = foreground_app()
         if fg is None:
             return
-        if fg != self.app_key:
-            self.mode_override = None
-            self.set_camera(False)
-            self.push_app(fg)
-            exe = "_desktop" if fg == "desktop" else fg[1].lower()
-            self.recent[exe] = self.app["name"]
+        if fg == self.last_fg:
+            return
+        self.last_fg = fg
+        exe = "_desktop" if fg == "desktop" else fg[1].lower()
+        self.fg_exe = exe
+        if self.profile_for(fg, exe).get("ignore") and self.app is not None:
+            self.recent.setdefault(exe, self.profiles.get(exe, {}).get("name") or Path(exe).stem.capitalize())
+            return  # fenêtre ignorée : l'écran garde l'app précédente
+        self.mode_override = None
+        self.set_camera(False)
+        self.push_app(fg)  # même si c'est l'app déjà connue : on la réaffiche
+        self.recent[exe] = self.app["name"]
 
     def push_appvol(self):
         if not self.app or self.app["knob"] != "appvol":
@@ -733,7 +744,7 @@ class Companion:
         log.info("alerte : %s - %s", title, subtitle)
 
     def check_alerts(self):
-        fg_exe = (self.app or {}).get("exe", "").lower()
+        fg_exe = self.fg_exe
         # Claude : passage de "au travail" à "attend" ou "terminé".
         try:
             data = json.loads(CLAUDE_STATUS.read_text(encoding="utf-8"))
