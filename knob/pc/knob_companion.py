@@ -15,6 +15,8 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
+import threading
 import time
 import unicodedata
 from datetime import datetime
@@ -38,6 +40,8 @@ import hue
 import audio_out
 import launcher
 import media
+import meeting
+import settings
 import sysmon
 import netspeed
 import permissions
@@ -431,6 +435,9 @@ class Companion:
         self.launcher_items = None
         self.launcher_mtime = 0
         self.launcher_icons = {}
+        self.settings = settings.load()
+        self.meeting_state = 0
+        self.updating = False
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
@@ -727,20 +734,73 @@ class Companion:
         return f"\t{COL_IDLE}"
 
     # --- veille
+    def is_night(self):
+        h, s = datetime.now().hour, self.settings
+        start, end = s["night_start"], s["night_end"]
+        return (start <= h or h < end) if start > end else (start <= h < end)
+
     def push_sleep(self):
         locked, idle = is_locked(), idle_seconds()
-        night = datetime.now().hour >= 23 or datetime.now().hour < 7
+        s = self.settings
+        night = self.is_night()
+        night_leds = max(0, min(255, int(s["night_leds"] * 255 / 100)))
         if night and (locked or idle > 120):
-            z = "Z8 0 1"            # nuit : quasi éteint, LEDs coupées, horloge
+            z = "Z8 0 1 0"          # nuit, absent : quasi éteint, LEDs coupées, horloge
         elif locked or idle > 600:
-            z = "Z70 0 1"           # absent : tamisé, horloge
+            z = "Z70 0 1 255"       # absent : tamisé, horloge
+        elif night:
+            z = f"Z{int(s['night_backlight'])} 1 0 {night_leds}"  # nuit, présent : écran et LEDs adoucis
         else:
-            z = "Z220 1 0"
+            z = "Z220 1 0 255"
         self.send_once("Z", z + "\n")
+
+    # --- réunion (une app utilise le micro)
+    def push_meeting(self):
+        st, label = meeting.state()
+        self.meeting_state = st
+        self.send_once("m", f"m{st}\t{ascii_text(label, 26)}\n")
+
+    # --- réglages (éditeur) et écran d'accueil
+    def push_home(self):
+        self.send_once("Q", settings.home_message(self.settings))
+
+    def save_settings(self, values):
+        self.settings = settings.save(values)
+        log.info("réglages enregistrés : %s", self.settings)
+
+    # --- mise à jour du firmware en un clic (icône de notification)
+    def update_firmware(self):
+        if self.updating:
+            return
+        self.updating = True
+        threading.Thread(target=self._update_firmware, daemon=True, name="firmware").start()
+
+    def _update_firmware(self):
+        try:
+            for _ in range(50):  # la boucle principale libère le port série
+                if self.ser is None:
+                    break
+                time.sleep(0.1)
+            pio = Path.home() / ".platformio" / "penv" / "Scripts" / "pio.exe"
+            fw = HERE.parent / "firmware"
+            log.info("mise à jour du firmware…")
+            self.tray.notify("Mise a jour du firmware en cours...")
+            res = subprocess.run([str(pio), "run", "-t", "upload", "-d", str(fw)], capture_output=True,
+                                 text=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
+            ok = res.returncode == 0
+            log.info("mise à jour du firmware : %s", "réussie" if ok else "ÉCHEC\n" + res.stdout[-1500:])
+            self.tray.notify("Firmware mis a jour" if ok else "Echec de la mise a jour (voir le journal)")
+        except Exception:
+            log.exception("mise à jour du firmware")
+        finally:
+            time.sleep(4)  # le temps que le module redémarre
+            self.updating = False
 
     # --- alertes (affichées par-dessus n'importe quelle app)
     def notify(self, symbol, title, subtitle, color):
-        self.send(f"N{symbol}\t{ascii_text(title, 22)}\t{ascii_text(subtitle, 26)}\t{color}\n")
+        # En réunion : rangée dans l'historique sans bulle ni LEDs qui clignotent.
+        kind = "n" if self.meeting_state and self.settings["meeting_silent"] else "N"
+        self.send(f"{kind}{symbol}\t{ascii_text(title, 22)}\t{ascii_text(subtitle, 26)}\t{color}\n")
         log.info("alerte : %s - %s", title, subtitle)
 
     def check_alerts(self):
@@ -815,6 +875,7 @@ class Companion:
         elif self.app_key:
             current = self.app_key[1].lower()
         return {"defaults": defaults, "overrides": overrides, "apps": apps, "options": {"actions": actions},
+                "settings": self.settings, "tiles": settings.TILES,
                 "current": current, "connected": self.ser is not None,
                 "port": self.ser.port if self.ser else None}
 
@@ -1040,6 +1101,8 @@ class Companion:
             self.guarded(self.push_system)
             self.guarded(self.push_audio_device)
             self.guarded(self.push_launcher)
+            self.guarded(self.push_home)
+            self.guarded(self.push_meeting)
         self.guarded(self.push_camera)
         if now - self.last_net > 0.5:
             self.last_net = now
@@ -1062,6 +1125,12 @@ class Companion:
         while True:
             try:
                 self.tray.set_connected(self.ser is not None)
+                if self.updating:  # mise à jour du firmware : on libère le port
+                    if self.ser:
+                        self.ser.close()
+                        self.ser = None
+                    time.sleep(0.5)
+                    continue
                 if self.ser is None and not self.connect():
                     time.sleep(1)
                     continue

@@ -13,13 +13,16 @@
 //                  "K<secondes depuis minuit>\t<date>"  horloge
 //                  "W<temp>\t<description>"             météo
 //                  "E<texte>" / "S<texte>\t<rrggbb>"    prochain événement / ligne d'état
-//                  "Z<rétroéclairage> <leds 0|1> <horloge 0|1>"  veille
+//                  "Z<rétroéclairage> <leds 0|1> <horloge 0|1> [<plafond LEDs>]"  veille / nuit
 //                  "J<w> <h> <len>" + octets RGB565 LE  image caméra ; "j" la masque
 //                  "Y<nom>\t<pour mille>\t<valeur>\t<rrggbb>\t<indice>"  tuile Hue
 //                  "G<cpu>	<gpu>	<ram>	<temp gpu>"  tuile système (-1 = indisponible)
 //                  "D<nom>"                             sortie audio courante
 //                  "O#<n>" puis "O<i>	<libellé>	<rrggbb>	<symbole>"  lanceur radial
 //                  "o<i> <w> <h> <len>" + octets         icône du raccourci i (RGB565 + alpha)
+//                  "Q<tuile> <ms app> <ms autres>"      écran d'accueil et délais de retour
+//                  "n<symbole>\t<titre>\t<sous-titre>\t<rrggbb>"  alerte silencieuse (historique)
+//                  "m<0|1|2>\t<app>"                    réunion : aucune / micro ouvert / coupé
 //                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
 //                  "X<id>\t<titre>\t<détail>\t<LIB,rrggbb|...>"  question à choix ; "x<id>" la ferme
 //   module -> PC : "H" (bonjour), "Q<tuile>", "R<crans>", "C" (clic), "L" (appui long),
@@ -185,10 +188,21 @@ static void handleLine(char *s) {
       if (splitFields(s + 1, f, 2) == 2) uiSetStatus(f[0], strtoul(f[1], nullptr, 16));
       break;
     case 'Z': {
-      int bl, leds, clock;
-      if (sscanf(s, "Z%d %d %d", &bl, &leds, &clock) == 3) uiSetSleep(bl, leds != 0, clock != 0);
+      int bl, leds, clock, ledMax = 255;
+      if (sscanf(s, "Z%d %d %d %d", &bl, &leds, &clock, &ledMax) >= 3) uiSetSleep(bl, leds != 0, clock != 0, ledMax);
       break;
     }
+    case 'Q': {
+      int tile, appMs, otherMs;
+      if (sscanf(s, "Q%d %d %d", &tile, &appMs, &otherMs) == 3) uiSetHome((Tile)tile, appMs, otherMs);
+      break;
+    }
+    case 'n':
+      if (splitFields(s + 1, f, 4) == 4) uiNotifySilent(f[0], f[1], f[2], strtoul(f[3], nullptr, 16));
+      break;
+    case 'm':
+      if (splitFields(s + 1, f, 2) == 2) uiSetMeeting(atoi(f[0]), f[1]);
+      break;
     case 'G': {
       int cpu, gpu, ram, temp;
       if (sscanf(s, "G%d %d %d %d", &cpu, &gpu, &ram, &temp) == 4) uiSetSystem(cpu, gpu, ram, temp);
@@ -259,6 +273,15 @@ static void handleKnob() {
     }
     return;
   }
+  // Historique ouvert : la molette fait défiler, un clic ou un appui long ferme.
+  if (uiHistoryVisible()) {
+    if (steps) {
+      uiWake();
+      uiHistoryRotate(steps);
+    }
+    if (hwPollButton() != BTN_NONE) uiHistoryClose();
+    return;
+  }
   // Une question est affichée : la molette lui appartient.
   if (uiAskVisible()) {
     if (steps) {
@@ -289,6 +312,8 @@ static void handleKnob() {
   uiWake();
   if (b == BTN_CLICK && uiNotifyVisible()) {
     uiNotifyDismiss();
+  } else if (b == BTN_CLICK && uiTile() == TILE_DASH) {
+    uiHistoryOpen();  // clic sur le tableau de bord : historique des alertes
   } else if (uiTile() == TILE_VOL || !synced) {
     if (b == BTN_CLICK) hwSendMediaKey(CONSUMER_CONTROL_MUTE);
     else if (synced) usbSerial.print("L\n");  // appui long : choix de la sortie audio

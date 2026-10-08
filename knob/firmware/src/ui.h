@@ -36,7 +36,7 @@ void uiSetEvent(const char *text);
 void uiSetStatus(const char *text, uint32_t rgb);
 
 // Veille : luminosité cible, LEDs autorisées, bascule sur l'horloge.
-void uiSetSleep(uint8_t backlight, bool leds, bool showClock);
+void uiSetSleep(uint8_t backlight, bool leds, bool showClock, uint8_t ledMax = 255);
 void uiWake();  // interaction locale : plein écran quelques secondes
 
 // Caméra (image RGB565 affichée en rond dans l'anneau de la tuile application)
@@ -69,6 +69,20 @@ bool uiLauncherVisible();
 void uiLauncherRotate(int steps);
 int uiLauncherIndex();
 void uiLauncherClose();
+
+// Écran d'accueil : tuile vers laquelle on revient, délais (ms, 0 = jamais) depuis
+// la tuile app et depuis les autres tuiles « de passage » (volume/Hue hors accueil).
+void uiSetHome(Tile home, uint32_t appReturnMs, uint32_t otherReturnMs);
+
+// Historique : chaque alerte y est rangée ; silent = rangée sans bulle (mode réunion).
+void uiNotifySilent(const char *symbol, const char *title, const char *subtitle, uint32_t rgb);
+bool uiHistoryVisible();
+void uiHistoryOpen();
+void uiHistoryRotate(int steps);
+void uiHistoryClose();
+
+// Réunion : 0 = aucune, 1 = micro ouvert, 2 = micro coupé ; label = nom de l'app.
+void uiSetMeeting(int state, const char *label);
 
 void uiSetHue(const char *name, int permille, const char *valueText, uint32_t rgb, const char *hint);
 

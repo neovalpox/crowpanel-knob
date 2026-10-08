@@ -78,6 +78,10 @@
   button.danger { color: var(--danger); }
   button:disabled { opacity: .4; cursor: default; }
   .help { color: var(--dim); font-size: 12.5px; }
+  section.settings { padding: 28px; max-width: 620px; display: grid; gap: 18px; align-content: start; }
+  section.settings h3 { margin: 10px 0 0; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 1.4px; }
+  .range-row { display: grid; grid-template-columns: 1fr 52px; gap: 12px; align-items: center; }
+  input[type=range] { padding: 0; accent-color: var(--accent); }
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0;
     background: var(--panel-2); border: 1px solid var(--line); padding: 10px 18px; border-radius: 99px;
     transition: .25s; pointer-events: none; }
@@ -140,6 +144,28 @@
       </div>
     </form>
   </section>
+  <section class="settings hidden" id="settings">
+    <div><h2>Réglages</h2><div class="help">Appliqués tout de suite au module.</div></div>
+    <h3>Écran d'accueil</h3>
+    <label class="field"><span>Tuile d'accueil</span><select id="s-home"></select></label>
+    <div class="row">
+      <label class="field"><span>Retour depuis l'app (s, 0 = jamais)</span><input type="number" min="0" max="600" id="s-app"></label>
+      <label class="field"><span>Retour depuis volume / Hue (s)</span><input type="number" min="0" max="600" id="s-other"></label>
+    </div>
+    <h3>Mode nuit</h3>
+    <div class="row">
+      <label class="field"><span>Début (heure)</span><input type="number" min="0" max="23" id="s-nstart"></label>
+      <label class="field"><span>Fin (heure)</span><input type="number" min="0" max="23" id="s-nend"></label>
+    </div>
+    <label class="field"><span>Luminosité de l'écran la nuit</span>
+      <div class="range-row"><input type="range" min="10" max="220" id="s-nbl"><output id="o-nbl"></output></div></label>
+    <label class="field"><span>LEDs la nuit (%)</span>
+      <div class="range-row"><input type="range" min="0" max="100" id="s-nleds"><output id="o-nleds"></output></div></label>
+    <h3>Réunion</h3>
+    <label class="inline"><input type="checkbox" id="s-silent"> Alertes silencieuses pendant un appel (rangées dans l'historique)</label>
+    <div class="actions"><button type="button" class="primary" id="s-save">Enregistrer les réglages</button>
+      <button type="button" id="s-fw">Mettre à jour le firmware</button></div>
+  </section>
 </main>
 <div class="toast" id="toast"></div>
 
@@ -183,7 +209,10 @@ function renderList() {
   const groups = [["Spécial", state.apps.filter(a => a.exe.startsWith("_"))],
                   ["Avec profil", state.apps.filter(a => !a.exe.startsWith("_") && a.hasProfile)],
                   ["Vues récemment", state.apps.filter(a => !a.hasProfile && !a.exe.startsWith("_"))]];
-  $("list").innerHTML = groups.map(([label, apps]) => {
+  const settingsItem = `<div class="app ${current === "__settings" ? "sel" : ""}" data-exe="__settings">
+      <div class="mono" style="background:#22d3ee22;color:#22d3ee">&#9881;</div>
+      <div class="meta"><div class="name">Réglages</div><div class="exe">accueil, nuit, réunion</div></div></div>`;
+  $("list").innerHTML = settingsItem + groups.map(([label, apps]) => {
     apps = apps.filter(match);
     if (!apps.length) return "";
     return `<div class="group">${label}</div>` + apps.map(a => `
@@ -210,7 +239,35 @@ function getAction(prefix) {
   return v || null;
 }
 
+const TILE_LABELS = { app: "Application", volume: "Volume", dashboard: "Tableau de bord", network: "Réseau",
+                      system: "Système", hue: "Hue" };
+
+function showSettings() {
+  current = "__settings";
+  document.querySelector("section.editor").classList.add("hidden");
+  $("settings").classList.remove("hidden");
+  const s = state.settings;
+  fillSelect($("s-home"), state.tiles.map(t => [t, TILE_LABELS[t] || t]));
+  $("s-home").value = s.home_tile; $("s-app").value = s.app_return_s; $("s-other").value = s.other_return_s;
+  $("s-nstart").value = s.night_start; $("s-nend").value = s.night_end;
+  $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent;
+  syncOutputs(); renderList();
+}
+
+function syncOutputs() { $("o-nbl").textContent = $("s-nbl").value; $("o-nleds").textContent = $("s-nleds").value + "%"; }
+
+async function saveSettings() {
+  const body = { home_tile: $("s-home").value, app_return_s: +$("s-app").value, other_return_s: +$("s-other").value,
+                 night_start: +$("s-nstart").value, night_end: +$("s-nend").value,
+                 night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked };
+  const res = await api("/api/settings", body);
+  state.settings = res.settings; toast("Réglages enregistrés");
+}
+
 function select(exe) {
+  if (exe === "__settings") return showSettings();
+  document.querySelector("section.editor").classList.remove("hidden");
+  $("settings").classList.add("hidden");
   current = exe;
   const app = state.apps.find(a => a.exe === exe);
   const p = effective(exe);
@@ -296,6 +353,9 @@ async function load() {
 }
 
 $("q").oninput = renderList;
+$("s-save").onclick = saveSettings;
+$("s-fw").onclick = async () => { await api("/api/firmware", {}); toast("Mise à jour du firmware lancée (environ 30 s)"); };
+$("s-nbl").oninput = syncOutputs; $("s-nleds").oninput = syncOutputs;
 $("form").onsubmit = save;
 $("reset").onclick = reset;
 $("form").oninput = updatePreview;

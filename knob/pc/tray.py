@@ -35,6 +35,7 @@ class Tray:
             pystray.MenuItem("Editer les profils", self.open_editor, default=True),
             pystray.MenuItem("Ouvrir le journal", lambda: os.startfile(self.log_path)),
             pystray.MenuItem("Recharger les profils", lambda: companion.request_reload()),
+            pystray.MenuItem("Mettre a jour le firmware", lambda: companion.update_firmware()),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quitter", self.quit),
         )
@@ -54,6 +55,12 @@ class Tray:
         self.connected = connected
         self.icon.icon = CONNECTED if connected else DISCONNECTED
         self.icon.title = "CrowPanel Knob - " + ("connecte" if connected else "non connecte")
+
+    def notify(self, message):
+        try:
+            self.icon.notify(message, "CrowPanel Knob")
+        except Exception:
+            pass
 
     def open_editor(self):
         webbrowser.open(self.editor_url)

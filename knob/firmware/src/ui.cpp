@@ -85,6 +85,28 @@ static uint32_t askColors[ASK_MAX_OPTS];
 static int askCount = 0, askIndex = 0, askId = -1;
 
 // Veille
+static uint8_t ledMax = 255;                 // plafond des LEDs (mode nuit)
+static uint8_t wakeBacklight = BACKLIGHT_MAX; // luminosité « réveillé » (mode nuit plus bas)
+
+// Écran d'accueil configurable
+static Tile homeTile = TILE_VOL;
+static uint32_t appReturnMs = APP_RETURN_MS, otherReturnMs = AUTO_RETURN_MS;
+
+// Historique des alertes (anneau de 12 entrées, la plus récente en tête)
+#define HIST_MAX 12
+struct HistEntry {
+  char sym[8], title[28], sub[32];
+  uint32_t color;
+  long secOfDay;  // heure de l'alerte (horloge reçue du PC), -1 = inconnue
+};
+static HistEntry hist[HIST_MAX];
+static int histCount = 0, histUnread = 0, histIndex = 0;
+static bool histOpen = false;
+static lv_obj_t *histPanel, *histSym, *histTitle, *histSub, *histWhen, *histCounter, *dashUnread;
+
+// Badge réunion (micro utilisé par une app)
+static lv_obj_t *meetBadge, *meetDot, *meetLabel;
+static int meetState = 0;
 static uint8_t sleepBacklight = BACKLIGHT_MAX;
 static bool sleepLeds = true, sleepClock = false;
 static unsigned long wakeUntil = 0;
@@ -463,6 +485,7 @@ static void buildDashTile(lv_obj_t *t) {
 
   eventLabel = makeLabel(t, &lv_font_montserrat_14, COL_MASTER, 50);
   limitWidth(eventLabel, 180);
+  dashUnread = makeLabel(t, &lv_font_montserrat_14, 0xFFB020, -88);  // « 3 alertes » non lues
   statusLabel = makeLabel(t, &lv_font_montserrat_14, COL_DIM, 72);
   limitWidth(statusLabel, 160);
 }
@@ -574,6 +597,11 @@ static void refreshAsk() {
   startAnim(askChoice, opaExec, 90, 255, 160, lv_anim_path_ease_out);
 }
 
+// Définies plus bas (historique, gestes de la tuile volume).
+static void buildHistoryPanel();
+static void onVolumeGesture(lv_event_t *);
+static void onVolumeTap(lv_event_t *);
+
 // ---------- API
 
 void uiBegin() {
@@ -597,6 +625,9 @@ void uiBegin() {
   buildHueTile(tiles[TILE_HUE]);
   // Appui long sur n'importe quelle tuile : lanceur radial.
   for (int i = 0; i < TILE_COUNT; i++) lv_obj_add_event_cb(tiles[i], onTileLongPress, LV_EVENT_LONG_PRESSED, NULL);
+  // Tuile volume : glisser haut/bas = piste suivante/précédente, double tap = lecture/pause.
+  lv_obj_add_event_cb(tiles[TILE_VOL], onVolumeGesture, LV_EVENT_GESTURE, NULL);
+  lv_obj_add_event_cb(tiles[TILE_VOL], onVolumeTap, LV_EVENT_SHORT_CLICKED, NULL);
 
   // --- Éléments fixes : indicateur de page, état USB
   for (int i = 0; i < TILE_COUNT; i++) {
@@ -607,6 +638,26 @@ void uiBegin() {
   lv_label_set_text(usbIcon, LV_SYMBOL_USB);
   lv_obj_align(usbIcon, LV_ALIGN_TOP_MID, 0, 16);
 
+  // Badge réunion en haut de l'écran, au-dessus de toutes les tuiles.
+  meetBadge = lv_obj_create(scr);
+  lv_obj_set_size(meetBadge, LV_SIZE_CONTENT, 22);
+  lv_obj_align(meetBadge, LV_ALIGN_TOP_MID, 0, 8);
+  lv_obj_set_style_radius(meetBadge, 11, 0);
+  lv_obj_set_style_bg_color(meetBadge, lv_color_hex(0x1A1D24), 0);
+  lv_obj_set_style_border_width(meetBadge, 0, 0);
+  lv_obj_set_style_pad_hor(meetBadge, 10, 0);
+  lv_obj_set_style_pad_ver(meetBadge, 0, 0);
+  lv_obj_set_style_pad_column(meetBadge, 6, 0);
+  lv_obj_set_flex_flow(meetBadge, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(meetBadge, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_clear_flag(meetBadge, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  meetDot = makeCircle(meetBadge, 8);
+  meetLabel = lv_label_create(meetBadge);
+  lv_obj_set_style_text_font(meetLabel, &lv_font_montserrat_14, 0);
+  lv_obj_set_style_text_color(meetLabel, lv_color_hex(COL_TEXT), 0);
+  lv_label_set_text(meetLabel, "");
+  lv_obj_add_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
+
   // Symbole géant par-dessus tout (piste suivante, etc.)
   flashLabel = lv_label_create(lv_layer_top());
   lv_obj_set_style_text_font(flashLabel, &lv_font_montserrat_48, 0);
@@ -615,6 +666,7 @@ void uiBegin() {
   lv_label_set_text(flashLabel, "");
 
   buildNotifPanel();
+  buildHistoryPanel();
   buildLauncher();
   buildAskPanel();  // au-dessus de tout : une permission passe devant le lanceur
 
@@ -731,7 +783,39 @@ void uiFlash(const char *text) {
 
 // ---------- Alertes
 
+static long currentSecOfDay() {
+  if (clockBase < 0) return -1;
+  return (long)(((millis() - clockBaseMs) / 1000 + (unsigned long)clockBase) % 86400);
+}
+
+static void refreshUnread() {
+  if (histUnread > 0)
+    lv_label_set_text_fmt(dashUnread, LV_SYMBOL_BELL " %d alerte%s", histUnread, histUnread > 1 ? "s" : "");
+  else
+    lv_label_set_text(dashUnread, "");
+}
+
+static void pushHistory(const char *symbol, const char *title, const char *subtitle, uint32_t rgb) {
+  memmove(&hist[1], &hist[0], sizeof(HistEntry) * (HIST_MAX - 1));
+  HistEntry &h = hist[0];
+  strlcpy(h.sym, symbol, sizeof h.sym);
+  strlcpy(h.title, title, sizeof h.title);
+  strlcpy(h.sub, subtitle, sizeof h.sub);
+  h.color = rgb;
+  h.secOfDay = currentSecOfDay();
+  histCount = min(histCount + 1, HIST_MAX);
+  histUnread = min(histUnread + 1, HIST_MAX);
+  refreshUnread();
+}
+
+void uiNotifySilent(const char *symbol, const char *title, const char *subtitle, uint32_t rgb) {
+  pushHistory(symbol, title, subtitle, rgb);
+}
+
 void uiNotify(const char *symbol, const char *title, const char *subtitle, uint32_t rgb) {
+  pushHistory(symbol, title, subtitle, rgb);
+  histUnread = max(0, histUnread - 1);  // vue en direct : pas « non lue »
+  refreshUnread();
   notifColor = rgb;
   lv_label_set_text(notifSym, symbol);
   lv_obj_set_style_text_color(notifSym, lv_color_hex(rgb), 0);
@@ -752,6 +836,132 @@ void uiNotifyDismiss() {
   if (!notifUntil) return;
   notifUntil = 0;
   startAnim(notifPanel, opaExec, 255, 0, 250, lv_anim_path_ease_in, 0, notifHidden);
+}
+
+// ---------- Historique des alertes
+
+static void refreshHistory() {
+  if (!histCount) {
+    lv_label_set_text(histSym, LV_SYMBOL_BELL);
+    lv_obj_set_style_text_color(histSym, lv_color_hex(COL_DIM), 0);
+    lv_label_set_text(histTitle, "Aucune alerte");
+    lv_label_set_text(histSub, "");
+    lv_label_set_text(histWhen, "");
+    lv_label_set_text(histCounter, "");
+    return;
+  }
+  const HistEntry &h = hist[histIndex];
+  lv_label_set_text(histSym, h.sym);
+  lv_obj_set_style_text_color(histSym, lv_color_hex(h.color), 0);
+  lv_label_set_text(histTitle, h.title);
+  lv_label_set_text(histSub, h.sub);
+  long now = currentSecOfDay();
+  if (h.secOfDay < 0 || now < 0) {
+    lv_label_set_text(histWhen, "");
+  } else {
+    long ago = (now - h.secOfDay + 86400) % 86400;
+    if (ago < 60)
+      lv_label_set_text(histWhen, "a l'instant");
+    else if (ago < 3600)
+      lv_label_set_text_fmt(histWhen, "il y a %ld min", ago / 60);
+    else
+      lv_label_set_text_fmt(histWhen, "%02ld:%02ld", h.secOfDay / 3600, h.secOfDay / 60 % 60);
+  }
+  lv_label_set_text_fmt(histCounter, "%d / %d", histIndex + 1, histCount);
+  startAnim(histTitle, opaExec, 80, 255, 160, lv_anim_path_ease_out);
+}
+
+static void onHistoryClicked(lv_event_t *) { uiHistoryClose(); }
+
+static void buildHistoryPanel() {
+  histPanel = makeCircle(lv_layer_top(), 240);
+  lv_obj_center(histPanel);
+  lv_obj_set_style_bg_color(histPanel, lv_color_hex(0x05060A), 0);
+  lv_obj_set_style_bg_opa(histPanel, 246, 0);
+  lv_obj_add_flag(histPanel, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(histPanel, onHistoryClicked, LV_EVENT_CLICKED, NULL);
+  lv_obj_t *title = makeLabel(histPanel, &lv_font_montserrat_14, COL_DIM, -86);
+  lv_obj_set_style_text_letter_space(title, 3, 0);
+  lv_label_set_text(title, "HISTORIQUE");
+  histSym = makeLabel(histPanel, &lv_font_montserrat_48, COL_TEXT, -38);
+  histTitle = makeLabel(histPanel, &lv_font_montserrat_20, COL_TEXT, 12);
+  limitWidth(histTitle, 186);
+  histSub = makeLabel(histPanel, &lv_font_montserrat_14, COL_DIM, 38);
+  limitWidth(histSub, 176);
+  histWhen = makeLabel(histPanel, &lv_font_montserrat_14, COL_MASTER, 62);
+  histCounter = makeLabel(histPanel, &lv_font_montserrat_14, COL_DIM, 88);
+  lv_obj_add_flag(histPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool uiHistoryVisible() { return histOpen; }
+
+void uiHistoryOpen() {
+  histOpen = true;
+  histIndex = 0;
+  histUnread = 0;
+  refreshUnread();
+  refreshHistory();
+  lv_obj_clear_flag(histPanel, LV_OBJ_FLAG_HIDDEN);
+  startAnim(histPanel, opaExec, 0, 255, 200, lv_anim_path_ease_out);
+  uiWake();
+}
+
+void uiHistoryRotate(int steps) {
+  if (!histOpen || histCount < 2) return;
+  int next = constrain(histIndex + (steps > 0 ? 1 : -1), 0, histCount - 1);
+  if (next == histIndex) return;
+  histIndex = next;
+  refreshHistory();
+}
+
+static void historyHidden(lv_anim_t *) { lv_obj_add_flag(histPanel, LV_OBJ_FLAG_HIDDEN); }
+
+void uiHistoryClose() {
+  if (!histOpen) return;
+  histOpen = false;
+  startAnim(histPanel, opaExec, 255, 0, 180, lv_anim_path_ease_in, 0, historyHidden);
+}
+
+// ---------- Réunion
+
+void uiSetMeeting(int state, const char *label) {
+  if (state == meetState && !strcmp(lv_label_get_text(meetLabel), label)) return;
+  meetState = state;
+  if (!state) {
+    lv_obj_add_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_set_style_bg_color(meetDot, lv_color_hex(state == 1 ? COL_MUTE : 0x3DDC84), 0);
+  lv_label_set_text(meetLabel, label);
+  lv_obj_clear_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---------- Gestes sur la tuile volume (gérés localement, touches multimédia HID)
+
+static void onVolumeGesture(lv_event_t *) {
+  lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+  if (dir == LV_DIR_TOP) {
+    hwSendMediaKey(0x00B5);  // piste suivante
+    uiFlash(LV_SYMBOL_NEXT);
+  } else if (dir == LV_DIR_BOTTOM) {
+    hwSendMediaKey(0x00B6);  // piste précédente
+    uiFlash(LV_SYMBOL_PREV);
+  } else {
+    return;
+  }
+  lv_indev_wait_release(lv_indev_get_act());
+}
+
+static void onVolumeTap(lv_event_t *) {
+  static unsigned long lastTap = 0;
+  unsigned long now = millis();
+  if (now - lastTap < 400) {
+    hwSendMediaKey(0x00CD);  // lecture / pause
+    uiFlash(LV_SYMBOL_PLAY);
+    lastTap = 0;
+  } else {
+    lastTap = now;
+  }
 }
 
 // ---------- Question à choix
@@ -849,18 +1059,27 @@ static void tickClock() {
 
 // ---------- Veille
 
-void uiSetSleep(uint8_t level, bool leds, bool showClock) {
+void uiSetSleep(uint8_t level, bool leds, bool showClock, uint8_t ledCap) {
   sleepBacklight = level;
   sleepLeds = leds;
+  ledMax = ledCap;
+  // Mode nuit : même réveillé, on ne dépasse pas la luminosité demandée par le PC.
+  wakeBacklight = (!showClock && level < BACKLIGHT_MAX) ? level : BACKLIGHT_MAX;
   if (showClock && !sleepClock) goTile(TILE_DASH, false);
-  if (!showClock && sleepClock) goTile(TILE_VOL, true);
+  if (!showClock && sleepClock) goTile(homeTile, true);
   sleepClock = showClock;
+}
+
+void uiSetHome(Tile home, uint32_t appMs, uint32_t otherMs) {
+  homeTile = home;
+  appReturnMs = appMs;
+  otherReturnMs = otherMs;
 }
 
 void uiWake() { wakeUntil = millis() + WAKE_MS; }
 
 static void tickBacklight() {
-  uint8_t target = millis() < wakeUntil ? BACKLIGHT_MAX : sleepBacklight;
+  uint8_t target = millis() < wakeUntil ? max(wakeBacklight, sleepBacklight) : sleepBacklight;
   if (fabsf(backlight - target) < 0.5f) return;
   backlight += (target - backlight) * 0.08f;  // fondu doux
   if (fabsf(backlight - target) < 1) backlight = target;
@@ -1059,6 +1278,13 @@ static void tickLeds() {
     bright = (t == TILE_DASH ? 6 : 18) + (uint8_t)((t == TILE_DASH ? 10 : 22) * breath) + ledFlash / 2;
   }
   ledFlash = ledFlash > 24 ? ledFlash - 24 : 0;
+  if (meetState && !notifUntil && askId < 0) {
+    // En réunion : anneau fixe rouge (micro ouvert) ou vert (coupé), discret.
+    color = meetState == 1 ? COL_MUTE : 0x3DDC84;
+    count = 5;
+    bright = 35;
+  }
+  bright = (uint16_t)bright * ledMax / 255;
 
   uint32_t key = color ^ ((uint32_t)count << 24) ^ ((uint32_t)bright << 27) ^ bright;
   if (key != lastKey) {
@@ -1070,15 +1296,16 @@ static void tickLeds() {
 void uiTick() {
   unsigned long now = millis();
   Tile t = uiTile();
-  // Retour à l'écran d'accueil (volume) sans interaction : app après 5 s (sauf caméra
-  // affichée), Hue après 8 s. Pas pendant la veille, le lanceur ou une question.
-  if (!sleepClock && !radOpen && askId < 0) {
+  // Retour à l'écran d'accueil sans interaction : depuis l'app (sauf caméra affichée) et
+  // depuis les tuiles de passage (volume, Hue). Les tuiles d'affichage (horloge, réseau,
+  // système) restent. Pas pendant la veille, le lanceur, une question ou l'historique.
+  if (!sleepClock && !radOpen && askId < 0 && !histOpen && t != homeTile) {
     uint32_t idle = lv_disp_get_inactive_time(NULL);
     bool camOn = !lv_obj_has_flag(camBox, LV_OBJ_FLAG_HIDDEN);
-    if (t == TILE_APP && !camOn && idle > APP_RETURN_MS)
-      goTile(TILE_VOL, true);
-    else if (t == TILE_HUE && idle > AUTO_RETURN_MS)
-      goTile(TILE_VOL, true);
+    if (t == TILE_APP && !camOn && appReturnMs && idle > appReturnMs)
+      goTile(homeTile, true);
+    else if ((t == TILE_HUE || t == TILE_VOL) && otherReturnMs && idle > otherReturnMs)
+      goTile(homeTile, true);
   }
   if (notifUntil && now > notifUntil) uiNotifyDismiss();
   if (radOpen && now - radLast > 12000) uiLauncherClose();

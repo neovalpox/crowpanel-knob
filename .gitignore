@@ -20,3 +20,4 @@ knob/pc/hue.json
 .playwright-mcp/
 mount_pixel/ref/
 knob/pc/launcher.json
+knob/pc/settings.json

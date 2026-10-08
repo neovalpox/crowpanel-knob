@@ -63,6 +63,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/profiles":
             self.companion.save_overrides(body.get("overrides", {}))
             return self._send(200, {"ok": True})
+        if self.path == "/api/settings":
+            self.companion.save_settings(body)
+            return self._send(200, {"ok": True, "settings": self.companion.settings})
+        if self.path == "/api/firmware":
+            self.companion.update_firmware()
+            return self._send(200, {"ok": True})
         if self.path == "/api/permission":
             # Bloque jusqu'à la réponse (molette, terminal au premier plan ou délai).
             return self._send(200, self.companion.permissions.ask(body))
