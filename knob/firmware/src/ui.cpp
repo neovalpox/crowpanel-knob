@@ -56,7 +56,7 @@ static int netDownPermille = 0;
 #define SPEC_INNER 46   // rayon de départ des barres (pochette de 72 px au centre)
 #define SPEC_LEN 40     // longueur max d'une barre
 #define SPEC_CY -18     // centre vertical de la pochette et du spectre
-static lv_obj_t *mediaPanel, *mediaBars, *mediaCover, *mediaHalo, *mediaArc, *mediaTitle, *mediaArtist, *mediaPause;
+static lv_obj_t *mediaPanel, *mediaBars, *mediaCover, *mediaProgress, *mediaTitle, *mediaArtist, *mediaPause;
 static uint8_t specBands[SPEC_BANDS];
 static uint8_t specBass = 0;
 static uint32_t mediaColor = 0x1ED760;
@@ -608,43 +608,81 @@ static void refreshAsk() {
   startAnim(askChoice, opaExec, 90, 255, 160, lv_anim_path_ease_out);
 }
 
-// Dessin du spectre : 48 traits partant du bord de la pochette, plus clairs quand ils sont hauts.
+// Dessin du spectre : chaque barre est une colonne de petits segments carrés (style égaliseur
+// à LED). Des rectangles pleins sans arrondi, donc sans masque d'anticrénelage : beaucoup plus
+// rapide que des traits épais en biais (mesuré : 115 ms -> voir ci-dessous).
+#define SPEC_BARS (SPEC_BANDS * 2)
+#define SEG_STEP 6   // pas entre segments (px)
+#define SEG_SIZE 4   // côté d'un segment (px)
+static float specCos[SPEC_BARS], specSin[SPEC_BARS];
+
 static void drawSpectrum(lv_event_t *e) {
   lv_draw_ctx_t *ctx = lv_event_get_draw_ctx(e);
   lv_obj_t *obj = lv_event_get_target(e);
   lv_area_t a;
   lv_obj_get_coords(obj, &a);
   int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
-  lv_draw_line_dsc_t d;
-  lv_draw_line_dsc_init(&d);
-  d.width = 4;
-  d.round_start = d.round_end = 1;
-  const int bars = SPEC_BANDS * 2;
-  for (int i = 0; i < bars; i++) {
-    int band = i < SPEC_BANDS ? i : bars - 1 - i;  // miroir gauche/droite, basses en haut
-    int level = specBands[band];
-    float ang = (-90.0f + (i + 0.5f) * 360.0f / bars) * PI / 180.0f;
-    float r0 = SPEC_INNER, r1 = SPEC_INNER + 3 + SPEC_LEN * level / 63.0f;
-    lv_point_t p1 = {(lv_coord_t)(cx + r0 * cosf(ang)), (lv_coord_t)(cy + r0 * sinf(ang))};
-    lv_point_t p2 = {(lv_coord_t)(cx + r1 * cosf(ang)), (lv_coord_t)(cy + r1 * sinf(ang))};
-    d.color = lv_color_mix(lv_color_white(), lv_color_hex(mediaColor), level * 3);
-    d.opa = 110 + level * 2;
-    lv_draw_line(ctx, &d, &p1, &p2);
+  const int maxSeg = SPEC_LEN / SEG_STEP + 1;
+  lv_draw_rect_dsc_t d;
+  lv_draw_rect_dsc_init(&d);
+  d.radius = 0;
+  d.bg_opa = LV_OPA_COVER;
+  lv_color_t base = lv_color_hex(mediaColor);
+  lv_color_t shades[8];
+  for (int s = 0; s < 8; s++) shades[s] = lv_color_mix(lv_color_white(), base, s * 22);  // plus clair vers l'extérieur
+  for (int i = 0; i < SPEC_BARS; i++) {
+    int band = i < SPEC_BANDS ? i : SPEC_BARS - 1 - i;  // miroir gauche/droite, basses en haut
+    int segs = 1 + specBands[band] * (maxSeg - 1) / 63;
+    for (int s = 0; s < segs; s++) {
+      float r = SPEC_INNER + 2 + s * SEG_STEP;
+      int x = cx + (int)(r * specCos[i]), y = cy + (int)(r * specSin[i]);
+      lv_area_t sq = {(lv_coord_t)(x - SEG_SIZE / 2), (lv_coord_t)(y - SEG_SIZE / 2),
+                      (lv_coord_t)(x + SEG_SIZE / 2 - 1), (lv_coord_t)(y + SEG_SIZE / 2 - 1)};
+      d.bg_color = shades[min(s, 7)];
+      lv_draw_rect(ctx, &d, &sq);
+    }
   }
 }
 
+// N'invalide que la couronne autour de la pochette (4 bandes), pas la pochette elle-même.
+static void invalidateSpectrum() {
+  lv_area_t a;
+  lv_obj_get_coords(mediaBars, &a);
+  int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2, hole = SPEC_INNER - 4;
+  lv_area_t parts[4] = {
+      {a.x1, a.y1, a.x2, (lv_coord_t)(cy - hole)},                                  // haut
+      {a.x1, (lv_coord_t)(cy + hole), a.x2, a.y2},                                  // bas
+      {a.x1, (lv_coord_t)(cy - hole), (lv_coord_t)(cx - hole), (lv_coord_t)(cy + hole)},  // gauche
+      {(lv_coord_t)(cx + hole), (lv_coord_t)(cy - hole), a.x2, (lv_coord_t)(cy + hole)},  // droite
+  };
+  for (auto &p : parts) lv_obj_invalidate_area(mediaBars, &p);
+}
+
 static void buildMediaPanel() {
+  for (int i = 0; i < SPEC_BARS; i++) {
+    float ang = (-90.0f + (i + 0.5f) * 360.0f / SPEC_BARS) * PI / 180.0f;
+    specCos[i] = cosf(ang);
+    specSin[i] = sinf(ang);
+  }
   mediaPanel = makeCircle(lv_layer_top(), 240);
+  // Carré et opaque (pas rond) : LVGL sait alors qu'il cache tout ce qui est dessous et ne
+  // redessine plus la tuile cachée à chaque image. L'écran étant rond, les coins sont invisibles.
+  lv_obj_set_style_radius(mediaPanel, 0, 0);
   lv_obj_center(mediaPanel);
   lv_obj_set_style_bg_color(mediaPanel, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(mediaPanel, LV_OPA_COVER, 0);
   lv_obj_add_flag(mediaPanel, LV_OBJ_FLAG_CLICKABLE);  // bloque les gestes vers les tuiles
 
-  mediaArc = makeArc(mediaPanel, 4);  // avancement du morceau, tout autour
-  lv_arc_set_rotation(mediaArc, 270);
-  lv_arc_set_bg_angles(mediaArc, 0, 360);
-  lv_obj_set_size(mediaArc, 234, 234);
-  lv_obj_center(mediaArc);
+  // Avancement du morceau : petite barre droite sous l'artiste. (Un anneau tout autour de
+  // l'écran coûtait ~7 ms par image : ses masques d'arc sont recalculés à chaque rafraîchissement.)
+  mediaProgress = lv_bar_create(mediaPanel);
+  lv_obj_set_size(mediaProgress, 64, 4);
+  lv_obj_align(mediaProgress, LV_ALIGN_CENTER, 0, 114);
+  lv_bar_set_range(mediaProgress, 0, 1000);
+  lv_obj_set_style_bg_color(mediaProgress, lv_color_hex(COL_TRACK), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(mediaProgress, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(mediaProgress, lv_color_hex(mediaColor), LV_PART_INDICATOR);
+  lv_obj_clear_flag(mediaProgress, LV_OBJ_FLAG_CLICKABLE);
 
   int span = 2 * (SPEC_INNER + SPEC_LEN + 6);
   mediaBars = lv_obj_create(mediaPanel);
@@ -654,10 +692,6 @@ static void buildMediaPanel() {
   lv_obj_clear_flag(mediaBars, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(mediaBars, drawSpectrum, LV_EVENT_DRAW_MAIN, NULL);
 
-  mediaHalo = makeCircle(mediaPanel, 76);
-  lv_obj_align(mediaHalo, LV_ALIGN_CENTER, 0, SPEC_CY);
-  lv_obj_set_style_bg_opa(mediaHalo, 0, 0);
-  lv_obj_set_style_shadow_opa(mediaHalo, 170, 0);
   mediaCover = lv_img_create(mediaPanel);
   lv_obj_align(mediaCover, LV_ALIGN_CENTER, 0, SPEC_CY);
   lv_img_set_antialias(mediaCover, true);
@@ -1294,10 +1328,9 @@ void uiMediaInfo(const char *title, const char *artist, uint32_t rgb, int permil
   if (strcmp(lv_label_get_text(mediaArtist), artist)) lv_label_set_text(mediaArtist, artist);
   if (rgb != mediaColor) {
     mediaColor = rgb;
-    lv_obj_set_style_arc_color(mediaArc, lv_color_hex(rgb), LV_PART_INDICATOR);
-    lv_obj_set_style_shadow_color(mediaHalo, lv_color_hex(rgb), 0);
+    lv_obj_set_style_bg_color(mediaProgress, lv_color_hex(rgb), LV_PART_INDICATOR);
   }
-  lv_arc_set_angles(mediaArc, 0, 360 * constrain(permille, 0, 1000) / 1000);
+  lv_bar_set_value(mediaProgress, constrain(permille, 0, 1000), LV_ANIM_OFF);
   if (playing) {
     lv_obj_add_flag(mediaPause, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_style_img_opa(mediaCover, LV_OPA_COVER, 0);
@@ -1317,10 +1350,7 @@ void uiSetSpectrum(const uint8_t *bands, int count, int bass) {
   for (int i = 0; i < SPEC_BANDS && i < count; i++) specBands[i] = min<int>(bands[i], 63);
   specBass = min(bass, 63);
   if (!mediaLocked) return;
-  // Le halo de la pochette respire avec les basses.
-  lv_obj_set_style_shadow_width(mediaHalo, 10 + specBass, 0);
-  lv_obj_set_style_shadow_spread(mediaHalo, specBass / 8, 0);
-  lv_obj_invalidate(mediaBars);
+  invalidateSpectrum();
 }
 
 // ---------- Hue

@@ -13,6 +13,7 @@ import ctypes
 import ctypes.wintypes as wt
 import hashlib
 import json
+import re
 import logging
 import os
 import subprocess
@@ -456,6 +457,8 @@ class Companion:
         self.last_spec = 0
         self.last_lock_info = 0
         self.lock_sent = {}
+        self.pending_lock = None    # verrouillage demandé par l'API (traité dans la boucle)
+        self.write_lock = threading.Lock()
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
@@ -496,7 +499,10 @@ class Companion:
         return True
 
     def send(self, data):
-        self.ser.write(data if isinstance(data, bytes) else data.encode("utf-8"))
+        # Un seul écrivain à la fois : deux fils qui écrivent en même temps mélangeraient
+        # les octets (ex. une trame de spectre au milieu d'une pochette).
+        with self.write_lock:
+            self.ser.write(data if isinstance(data, bytes) else data.encode("utf-8"))
 
     def send_icon(self, payload, animate):
         self.send(f"I{ICON_SIZE} {ICON_SIZE} {len(payload)}\n".encode() + payload)
@@ -800,9 +806,11 @@ class Companion:
     def lock_media(self):
         if not self.app:
             return
-        source = self.app["profile"].get("media_source") or Path(self.app["exe"]).stem
-        self.locked = {"source": source, "name": self.app["name"], "color": hex_color(self.app["color"]),
-                       "payload": self.app["payload"]}
+        # Depuis une app média : son lecteur ; sinon (éditeur, API) : Spotify par défaut.
+        is_media = self.app.get("widget") == "media"
+        source = (self.app["profile"].get("media_source") or Path(self.app["exe"]).stem) if is_media else "spotify"
+        self.locked = {"source": source, "name": self.app["name"] if is_media else "Spotify",
+                       "color": hex_color(self.app["color"]), "payload": self.app["payload"]}
         self.lock_sent = {}
         self.send("e1\n")
         self.spectrum.start(audio_out.current()[1])
@@ -1183,7 +1191,11 @@ class Companion:
             elif msg[0] == "Q":
                 self.tile = int(msg[1:] or 0)
             elif msg[0] == "M":
-                log.info("module : %s octets de tas libres", msg[1:])
+                # Diagnostic du module : journalisé au démarrage, ou si le rendu devient lent.
+                slow = re.search(r"rendu_max=(\d+)", msg)
+                if not slow or int(slow.group(1)) > 80:
+                    log.info("module : tas %s", msg[1:])
+                self.last_perf = msg[1:]
             elif self.tile == TILE_HUE and msg[0] in "RCL":
                 if msg[0] == "R":
                     self.hue.adjust(int(msg[1:]))
@@ -1250,6 +1262,12 @@ class Companion:
             self.guarded(self.push_tile_config)
             self.guarded(self.push_meeting)
         self.guarded(self.push_camera)
+        if self.pending_lock is not None:  # demandé par l'API locale
+            want, self.pending_lock = self.pending_lock, None
+            if want and not self.locked:
+                self.guarded(self.lock_media)
+            elif not want and self.locked:
+                self.guarded(self.unlock_media)
         if self.locked:
             if now - self.last_spec > 0.033:  # ~30 images/s
                 self.last_spec = now

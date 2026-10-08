@@ -394,10 +394,31 @@ void setup() {
   uiSetSynced(false);
 }
 
+// Diagnostic : toutes les 2 s, pire temps de rendu LVGL, mémoire LVGL libre et tas libre.
+static void reportPerf(unsigned long renderMs) {
+  static unsigned long worst = 0, last = 0, frames = 0;
+  worst = max(worst, renderMs);
+  frames++;
+  if (millis() - last < 2000) return;
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+  if (synced && (uiMediaLocked() || worst > 80))
+    usbSerial.printf("M%u lv=%u frag=%u%% rendu_max=%lums boucles=%lu refr=%u px_max=%u refr_ms_max=%u anims=%u\n",
+                     (unsigned)ESP.getFreeHeap(), (unsigned)mon.free_size, (unsigned)mon.frag_pct, worst, frames,
+                     (unsigned)hwRefrCount, (unsigned)hwRefrPx, (unsigned)hwRefrMs,
+                     (unsigned)lv_anim_count_running());
+  hwRefrCount = hwRefrPx = hwRefrMs = 0;
+  worst = 0;
+  frames = 0;
+  last = millis();
+}
+
 void loop() {
   pollLink();
   handleKnob();
   uiTick();
+  unsigned long t0 = millis();
   lv_timer_handler();
+  reportPerf(millis() - t0);
   delay(2);
 }

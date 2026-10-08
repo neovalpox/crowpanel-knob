@@ -17,6 +17,10 @@
 #define LV_INDEV_DEF_GESTURE_LIMIT 40
 
 #define LV_USE_LOG 0
+
+// Si LVGL manque de mémoire (ou autre assertion), on redémarre au lieu de rester figé.
+#define LV_ASSERT_HANDLER_INCLUDE <esp_system.h>
+#define LV_ASSERT_HANDLER esp_restart();
 #define LV_USE_PERF_MONITOR 0
 
 #define LV_FONT_MONTSERRAT_14 1

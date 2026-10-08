@@ -66,6 +66,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/settings":
             self.companion.save_settings(body)
             return self._send(200, {"ok": True, "settings": self.companion.settings})
+        if self.path == "/api/media-lock":
+            c = self.companion
+            # Traité par la boucle principale : seul fil autorisé à piloter le mode dédié.
+            c.pending_lock = bool(body.get("on", not c.locked))
+            return self._send(200, {"locked": bool(c.locked), "perf": getattr(c, "last_perf", "")})
         if self.path == "/api/firmware":
             self.companion.update_firmware()
             return self._send(200, {"ok": True})

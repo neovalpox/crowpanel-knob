@@ -31,6 +31,7 @@ static Arduino_GFX *gfx = new Arduino_GC9A01(bus, TFT_RST, 0, true);
 static Adafruit_NeoPixel leds(LED_NUM, LED_PIN, NEO_GRB + NEO_KHZ800);
 static USBHIDConsumerControl consumer;
 USBCDC usbSerial;
+volatile uint32_t hwRefrCount = 0, hwRefrPx = 0, hwRefrMs = 0;
 
 // ---------- Molette (interruptions : le rendu LVGL ne doit pas faire rater de crans)
 static const int8_t QDEC[16] = {0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0};
@@ -177,6 +178,11 @@ void hwBegin() {
   disp.ver_res = 240;
   disp.flush_cb = lvFlush;
   disp.draw_buf = &drawBuf;
+  disp.monitor_cb = [](lv_disp_drv_t *, uint32_t ms, uint32_t px) {
+    hwRefrCount++;
+    if (px > hwRefrPx) hwRefrPx = px;
+    if (ms > hwRefrMs) hwRefrMs = ms;
+  };
   lv_disp_drv_register(&disp);
 
   static lv_indev_drv_t touch;

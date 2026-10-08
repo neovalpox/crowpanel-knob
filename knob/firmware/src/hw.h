@@ -15,3 +15,5 @@ void hwSetLeds(uint32_t rgb, uint8_t count, uint8_t brightness);
 void hwSetBacklight(uint8_t level);  // 0 = éteint, 255 = max
 
 extern USBCDC usbSerial;
+// Diagnostic du rendu (rappel LVGL après chaque rafraîchissement) : nombre, pixels max, ms max.
+extern volatile uint32_t hwRefrCount, hwRefrPx, hwRefrMs;
