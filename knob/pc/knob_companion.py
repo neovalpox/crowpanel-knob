@@ -296,7 +296,10 @@ DEFAULT_PROFILES = {
     "steam.exe": {"name": "Steam", "knob": "scroll", "click": "playpause", "long": None},
     "mstsc.exe": {"name": "Bureau a distance", "knob": "master", "click": "mute", "long": None},
     "rustdesk.exe": {"name": "RustDesk", "knob": "master", "click": "mute", "long": None},
-    "deskflow.exe": {"name": "Deskflow", "knob": "master", "click": "mute", "long": None},
+    # Deskflow : c'est le moteur (deskflow-core) qui passe au premier plan quand la souris
+    # part sur l'autre PC ; deskflow.exe n'est que la fenêtre de configuration.
+    "deskflow-core.exe": {"name": "Deskflow", "ignore": True, "knob": "master", "click": "mute", "long": None},
+    "deskflow.exe": {"name": "Deskflow (reglages)", "knob": "master", "click": "mute", "long": None},
     "lightburn.exe": {"name": "LightBurn", "knob": "scroll", "click": None, "long": None},
     "excel.exe": {"name": "Excel", "knob": "scroll", "click": "key:ctrl+s", "long": None},
 }
@@ -865,7 +868,7 @@ class Companion:
             icon, color = self.png_cache.get("desktop" if exe == "_desktop" else exe, (None, "#22D3EE"))
             name = special.get(exe) or prof.get("name") or self.recent.get(exe) or Path(exe).stem.capitalize()
             apps.append({"exe": exe, "name": name, "icon": icon, "color": color,
-                         "hasProfile": exe in defaults or exe in overrides})
+                         "hasProfile": exe in defaults or exe in overrides, "seen": exe in self.recent})
         actions = [[a, ACTION_LABELS.get(a, a).capitalize()] for a in
                    ("playpause", "next", "prev", "mute", "appmute", "toggle:appvol", "bambu:camera", "bambu:next")]
         actions += [[k, v.capitalize()] for k, v in ACTION_LABELS.items() if k.startswith("key:")]

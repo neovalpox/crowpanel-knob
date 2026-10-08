@@ -41,6 +41,7 @@
   .app .meta { min-width: 0; flex: 1; }
   .app .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .app .exe { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seen { color: var(--ok); font-size: 10px; }
   .badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #22d3ee22; color: var(--accent); }
   .group { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; padding: 12px 10px 4px; }
 
@@ -218,7 +219,7 @@ function renderList() {
     return `<div class="group">${label}</div>` + apps.map(a => `
       <div class="app ${current === a.exe ? "sel" : ""}" data-exe="${a.exe}">
         ${iconHtml(a)}
-        <div class="meta"><div class="name">${a.name}</div><div class="exe">${a.exe}</div></div>
+        <div class="meta"><div class="name">${a.name}</div><div class="exe">${a.seen ? '<span class="seen" title="Vue au premier plan depuis le démarrage">&#9679;</span> ' : ""}${a.exe}</div></div>
         ${state.overrides[a.exe] ? '<span class="badge">perso</span>' : ""}
       </div>`).join("");
   }).join("");
