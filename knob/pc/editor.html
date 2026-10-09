@@ -3,200 +3,535 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Profils CrowPanel Knob</title>
+<title>CrowPanel Knob</title>
 <link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #07080b; --panel: #0f1116; --panel-2: #151820; --line: #232733;
-    --text: #f2f4f8; --dim: #7c8494; --accent: #22d3ee; --danger: #ff4d5e; --ok: #3ddc84;
-    --radius: 14px;
+    --abyss: #0A0F24;       /* fond de scène, indigo profond */
+    --ink: #E9F1FF;         /* texte */
+    --mist: #8C9BC4;        /* texte secondaire */
+    --ice: #7DF9FF;         /* interface : focus, boutons, traits */
+    --plasma: #FF4FD8;      /* profils personnalisés */
+    --amber: #FFB547;       /* actions qui défont */
+    --glass: rgba(16, 24, 56, 0.58);
+    --glass-strong: rgba(14, 20, 48, 0.82);
+    --edge: rgba(125, 249, 255, 0.16);
+    --edge-hot: rgba(125, 249, 255, 0.55);
+    --accent: #7DF9FF;      /* couleur de l'app sélectionnée (mise à jour en JS) */
+    --cut: 14px;            /* biseau des coins */
+    --display: "Chakra Petch", "Segoe UI", sans-serif;
+    --body: "Barlow", "Segoe UI", sans-serif;
   }
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.45 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    margin: 0; color: var(--ink); background: var(--abyss); overflow: hidden;
+    font: 15px/1.5 var(--body);
   }
-  header {
-    display: flex; align-items: center; gap: 12px; padding: 18px 24px;
-    border-bottom: 1px solid var(--line);
-  }
-  header .logo { width: 26px; height: 26px; border-radius: 50%; border: 4px solid var(--accent);
-    box-shadow: 0 0 16px #22d3ee55; display: grid; place-items: center; }
-  header .logo::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-  header h1 { font-size: 17px; font-weight: 600; margin: 0; letter-spacing: .2px; }
-  header .sub { color: var(--dim); font-size: 13px; margin-left: auto; }
-  main { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 63px); }
-  @media (max-width: 820px) { main { grid-template-columns: 1fr; } aside { max-height: 40vh; } }
-
-  aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-  .search { padding: 14px; border-bottom: 1px solid var(--line); }
-  .search input { width: 100%; }
-  .list { overflow: auto; flex: 1; padding: 6px; }
-  .app { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 10px;
-    cursor: pointer; border: 1px solid transparent; }
-  .app:hover { background: var(--panel); }
-  .app.sel { background: var(--panel-2); border-color: var(--line); }
-  .app img, .app .mono { width: 30px; height: 30px; border-radius: 8px; flex: none; }
-  .app .mono { display: grid; place-items: center; font-weight: 700; color: #fff; }
-  .app .meta { min-width: 0; flex: 1; }
-  .app .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .app .exe { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .seen { color: var(--ok); font-size: 10px; }
-  .badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; background: #22d3ee22; color: var(--accent); }
-  .group { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; padding: 12px 10px 4px; }
-
-  section.editor { padding: 28px; display: grid; grid-template-columns: 280px minmax(0, 520px); gap: 36px; align-content: start; }
-  @media (max-width: 1100px) { section.editor { grid-template-columns: 1fr; } }
-
-  /* Aperçu du module */
-  .knob { width: 260px; height: 260px; border-radius: 50%; padding: 12px; margin: 0 auto;
-    background: radial-gradient(circle at 50% 40%, #1b1f28, #090a0e 70%);
-    box-shadow: 0 0 0 10px #2a2e38, 0 0 0 12px #3a3f4a, 0 18px 50px #000a; position: relative; }
-  .screen { width: 100%; height: 100%; border-radius: 50%; background: #000; position: relative; overflow: hidden; }
-  .screen svg { position: absolute; inset: 0; }
-  .screen .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; padding-top: 44px; }
-  .halo { width: 70px; height: 70px; border-radius: 50%; display: grid; place-items: center; }
-  .halo img { width: 60px; height: 60px; }
-  .screen .pname { margin-top: 14px; font-weight: 600; font-size: 16px; max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .screen .pval { font-size: 15px; margin-top: 4px; }
-  .screen .phint { color: var(--dim); font-size: 11.5px; margin-top: 6px; max-width: 150px; text-align: center; }
-  .legend { margin-top: 22px; color: var(--dim); font-size: 13px; text-align: center; }
-
-  form { display: grid; gap: 16px; }
-  .field { display: grid; gap: 6px; align-content: start; }
-  .field > span { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: 1.2px; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
-  input, select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
-    border-radius: 10px; padding: 9px 11px; font: inherit; outline: none; }
-  input:focus, select:focus { border-color: var(--accent); }
-  input[type=color] { padding: 2px; height: 38px; width: 64px; }
-  .inline { display: flex; align-items: center; gap: 10px; }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .vignette { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(3, 5, 16, .75) 100%); }
+  #wires { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  #wires line { stroke: var(--accent); stroke-width: 1.2; opacity: .55; transition: stroke .4s; }
+  #wires circle { fill: var(--accent); transition: fill .4s; }
   .hidden { display: none !important; }
-  .actions { display: flex; gap: 10px; margin-top: 6px; }
-  button { font: inherit; border-radius: 10px; padding: 10px 18px; cursor: pointer; border: 1px solid var(--line);
-    background: var(--panel-2); color: var(--text); }
-  button.primary { background: var(--accent); color: #031317; border-color: transparent; font-weight: 600; }
-  button.danger { color: var(--danger); }
-  button:disabled { opacity: .4; cursor: default; }
-  .help { color: var(--dim); font-size: 12.5px; }
-  section.settings { padding: 28px; max-width: 620px; display: grid; gap: 18px; align-content: start; }
-  section.settings h3 { margin: 10px 0 0; font-size: 13px; color: var(--dim); text-transform: uppercase; letter-spacing: 1.4px; }
-  .range-row { display: grid; grid-template-columns: 1fr 52px; gap: 12px; align-items: center; }
-  input[type=range] { padding: 0; accent-color: var(--accent); }
-  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0;
-    background: var(--panel-2); border: 1px solid var(--line); padding: 10px 18px; border-radius: 99px;
-    transition: .25s; pointer-events: none; }
-  .toast.show { opacity: 1; transform: translateX(-50%); }
-  h2 { margin: 0 0 4px; font-size: 20px; }
+
+  /* ---------- Cadre de l'interface ---------- */
+  .hud {
+    position: relative; z-index: 1; height: 100vh;
+    display: grid; grid-template-columns: 300px 1fr 400px; grid-template-rows: auto 1fr;
+    gap: 18px; padding: 18px; pointer-events: none;
+  }
+  .hud > * { pointer-events: auto; }
+  .chamfer {
+    clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  }
+  .glass {
+    background: var(--glass); border: 1px solid var(--edge);
+    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+
+  header {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 4px 6px;
+  }
+  .wordmark { font: 600 22px/1 var(--display); letter-spacing: .02em; display: flex; align-items: center; gap: 12px; }
+  .wordmark .dial {
+    width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--accent);
+    box-shadow: 0 0 18px var(--accent), inset 0 0 8px var(--accent); position: relative; transition: border-color .4s, box-shadow .4s;
+  }
+  .wordmark .dial::after { content: ""; position: absolute; inset: 7px; border-radius: 50%; background: var(--accent); transition: background .4s; }
+  .status { margin-left: auto; display: flex; align-items: center; gap: 10px; font: 500 14px var(--display); color: var(--mist); }
+  .status .led { width: 9px; height: 9px; border-radius: 50%; background: #3a4566; }
+  .status.on .led { background: #3DDC84; box-shadow: 0 0 10px #3DDC84; }
+  .status.on { color: var(--ink); }
+
+  /* ---------- Rail des apps (cartouches) ---------- */
+  .rail { display: flex; flex-direction: column; min-height: 0; padding: 14px 10px 10px; }
+  .rail input {
+    width: 100%; margin: 0 4px 10px; width: calc(100% - 8px);
+  }
+  .list { overflow-y: auto; overflow-x: hidden; flex: 1; padding: 2px 4px 6px; scrollbar-width: thin; scrollbar-color: #2a3666 transparent; }
+  .group { font: 500 12px var(--display); color: var(--mist); padding: 14px 8px 6px; letter-spacing: .04em; }
+  .app {
+    --c: var(--ice);
+    display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+    padding: 8px 10px; margin: 2px 0; cursor: pointer; position: relative;
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  }
+  .app:hover { background: rgba(125, 249, 255, .06); }
+  .app.sel { background: linear-gradient(90deg, color-mix(in srgb, var(--c) 26%, transparent), rgba(125,249,255,.03)); }
+  .app.sel::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--c); box-shadow: 0 0 12px var(--c); }
+  .app img, .app .mono { width: 34px; height: 34px; border-radius: 9px; }
+  .app .mono { display: grid; place-items: center; font: 700 15px var(--display); color: #fff; }
+  .app .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app .exe { color: var(--mist); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seen { color: #3DDC84; font-size: 9px; vertical-align: 1px; }
+  .badge { font: 500 11px var(--display); padding: 2px 8px; color: var(--plasma); border: 1px solid color-mix(in srgb, var(--plasma) 50%, transparent); }
+
+  /* ---------- Scène centrale : étiquettes autour du module ---------- */
+  .stagehud { position: relative; pointer-events: none; }
+  .callout {
+    position: absolute; min-width: 170px; max-width: 220px; padding: 10px 14px;
+    background: var(--glass-strong); border: 1px solid var(--edge);
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    transition: border-color .3s;
+  }
+  .callout .k { font: 500 13px var(--display); color: var(--mist); }
+  .callout .v { font: 600 17px var(--display); color: var(--ink); }
+  .callout.flash { border-color: var(--accent); }
+  .c-turn { left: 0; top: 47%; }
+  .c-click { right: 0; top: 14%; }
+  .c-long { right: 0; top: 70%; }
+  .stagetitle { position: absolute; left: 0; right: 0; bottom: 4%; text-align: center; }
+  .stagetitle h2 { margin: 0; font: 600 34px/1.1 var(--display); text-shadow: 0 0 24px color-mix(in srgb, var(--accent) 60%, transparent); }
+  .stagetitle .sub { color: var(--mist); margin-top: 6px; font-size: 14px; }
+  .hint3d { position: absolute; top: 2%; left: 0; right: 0; text-align: center; color: var(--mist); font-size: 13px; opacity: .7; }
+
+  /* ---------- Feuille de réglages ---------- */
+  .sheet { display: flex; flex-direction: column; min-height: 0; }
+  .sheet-body { overflow: auto; padding: 20px 22px 12px; display: grid; gap: 16px; align-content: start; scrollbar-width: thin; scrollbar-color: #2a3666 transparent; }
+  .sheet h3 { margin: 6px 0 -4px; font: 600 15px var(--display); color: var(--ice); }
+  .sheet .lead { color: var(--mist); font-size: 14px; margin: -8px 0 0; }
+  .field { display: grid; gap: 6px; align-content: start; }
+  .field > span { font: 500 13px var(--display); color: var(--mist); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  input, select {
+    font: 15px var(--body); color: var(--ink); background: rgba(6, 10, 28, .7);
+    border: 1px solid var(--edge); padding: 9px 11px; outline: none; width: 100%;
+    clip-path: polygon(7px 0, 100% 0, 100% calc(100% - 7px), calc(100% - 7px) 100%, 0 100%, 0 7px);
+  }
+  select { appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ice) 50%), linear-gradient(135deg, var(--ice) 50%, transparent 50%);
+    background-position: calc(100% - 17px) 55%, calc(100% - 12px) 55%; background-size: 5px 5px; background-repeat: no-repeat; padding-right: 30px; }
+  select option { background: #0d1433; }
+  input:focus-visible, select:focus-visible, button:focus-visible, .app:focus-visible { outline: 2px solid var(--ice); outline-offset: 2px; }
+  input:focus, select:focus { border-color: var(--edge-hot); }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ice); clip-path: none; padding: 0; }
+  input[type=color] { width: 54px; height: 36px; padding: 2px; }
+  input[type=range] { padding: 0; clip-path: none; border: 0; background: transparent; accent-color: var(--ice); }
+  .inline { display: flex; align-items: center; gap: 10px; }
+  .range-row { display: grid; grid-template-columns: 1fr 50px; gap: 10px; align-items: center; font: 500 14px var(--display); }
+  .help { color: var(--mist); font-size: 13px; }
+  code { font-family: var(--display); color: var(--ice); }
+  .sheet-actions { display: flex; gap: 10px; padding: 14px 22px 18px; border-top: 1px solid var(--edge); flex-wrap: wrap; }
+  button {
+    font: 600 15px var(--display); padding: 11px 20px; cursor: pointer; border: 1px solid var(--edge);
+    color: var(--ink); background: rgba(125, 249, 255, .06);
+    clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+  }
+  button.primary { background: var(--ice); color: #04122a; border-color: transparent; }
+  button.primary:hover { box-shadow: 0 0 22px var(--ice); }
+  button.danger { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, transparent); background: transparent; }
+  button:disabled { opacity: .35; cursor: default; box-shadow: none; }
+
+  .toast {
+    position: fixed; z-index: 5; bottom: 26px; left: 50%; transform: translate(-50%, 16px); opacity: 0;
+    background: var(--glass-strong); border: 1px solid var(--edge-hot); padding: 11px 20px;
+    font: 500 15px var(--display); transition: .25s; pointer-events: none;
+    clip-path: polygon(9px 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%, 0 9px);
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---------- Petits écrans : la scène reste en fond, les panneaux s'empilent ---------- */
+  @media (max-width: 1100px) {
+    body { overflow: auto; }
+    .hud { grid-template-columns: 1fr; grid-template-rows: auto 360px auto auto; height: auto; }
+    .stagetitle { bottom: 0; }
+    .stagetitle h2 { font-size: 24px; }
+    .hint3d { display: none; }
+    .rail { max-height: 40vh; order: 3; }
+    .sheet { order: 2; }
+    .stagehud { order: 1; min-height: 260px; }
+    .callout { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<header>
-  <div class="logo"></div>
-  <h1>CrowPanel Knob · Profils</h1>
-  <span class="sub" id="status">Chargement…</span>
-</header>
-<main>
-  <aside>
-    <div class="search"><input id="q" placeholder="Rechercher une app…" autocomplete="off"></div>
-    <div class="list" id="list"></div>
-  </aside>
-  <section class="editor">
-    <div>
-      <div class="knob"><div class="screen">
-        <svg viewBox="0 0 236 236"><circle cx="118" cy="118" r="108" fill="none" stroke="#1a1d24" stroke-width="12"
-          stroke-dasharray="509 679" transform="rotate(135 118 118)" stroke-linecap="round"/>
-          <circle id="arc" cx="118" cy="118" r="108" fill="none" stroke="#22d3ee" stroke-width="12"
-          stroke-dasharray="320 679" transform="rotate(135 118 118)" stroke-linecap="round"/></svg>
-        <div class="center">
-          <div class="halo" id="halo"><img id="picon" alt=""></div>
-          <div class="pname" id="pname">—</div>
-          <div class="pval" id="pval"></div>
-          <div class="phint" id="phint"></div>
-        </div>
-      </div></div>
-      <div class="legend" id="legend"></div>
-    </div>
+<canvas id="stage" aria-hidden="true"></canvas>
+<div class="vignette"></div>
+<svg id="wires" aria-hidden="true"></svg>
 
-    <form id="form" autocomplete="off">
-      <div><h2 id="title">Choisis une app</h2><div class="help" id="exe"></div></div>
+<div class="hud">
+  <header>
+    <div class="wordmark"><span class="dial"></span>CrowPanel Knob</div>
+    <div class="status" id="status-wrap"><span class="led"></span><span id="status">Connexion…</span></div>
+  </header>
+
+  <nav class="rail glass chamfer" aria-label="Applications et tuiles">
+    <input id="q" placeholder="Rechercher une app" autocomplete="off" aria-label="Rechercher une app">
+    <div class="list" id="list"></div>
+  </nav>
+
+  <section class="stagehud" aria-live="polite">
+    <div class="hint3d">Glisse pour faire pivoter le module</div>
+    <div class="callout c-turn"><div class="k">Tourner</div><div class="v" id="co-turn">—</div></div>
+    <div class="callout c-click"><div class="k">Clic</div><div class="v" id="co-click">—</div></div>
+    <div class="callout c-long"><div class="k">Appui long</div><div class="v" id="co-long">—</div></div>
+    <div class="stagetitle"><h2 id="title">CrowPanel Knob</h2><div class="sub" id="exe"></div></div>
+  </section>
+
+  <!-- Profil d'une app ou d'une tuile -->
+  <form class="sheet glass chamfer" id="form" autocomplete="off">
+    <div class="sheet-body">
       <label class="field app-only"><span>Nom affiché</span><input id="f-name" placeholder="Nom de l'app (auto si vide)"></label>
       <div class="field app-only"><span>Couleur</span>
-        <div class="inline"><label class="inline"><input type="checkbox" id="f-color-auto"> auto (tirée de l'icône)</label>
-          <input type="color" id="f-color"></div></div>
+        <div class="inline"><label class="inline"><input type="checkbox" id="f-color-auto"> Tirée de l'icône</label>
+          <input type="color" id="f-color" aria-label="Couleur"></div></div>
       <label class="inline app-only"><input type="checkbox" id="f-ignore"> Ne pas changer l'écran quand cette app passe au premier plan</label>
       <label class="field app-only"><span>Widget</span><select id="f-widget"></select></label>
       <label class="field"><span>Molette</span><select id="f-knob"></select></label>
       <div class="row" id="keys-row">
-        <label class="field"><span>Cran horaire</span><input id="f-cw" placeholder="ex. ctrl+tab"></label>
-        <label class="field"><span>Cran anti-horaire</span><input id="f-ccw" placeholder="ex. ctrl+shift+tab"></label>
+        <label class="field"><span>Cran horaire</span><input id="f-cw" placeholder="ctrl+tab"></label>
+        <label class="field"><span>Cran anti-horaire</span><input id="f-ccw" placeholder="ctrl+shift+tab"></label>
       </div>
       <div class="row">
         <label class="field"><span>Clic</span><select id="f-click"></select>
-          <input id="f-click-key" class="hidden" placeholder="ex. ctrl+s"></label>
+          <input id="f-click-key" class="hidden" placeholder="ctrl+s"></label>
         <label class="field"><span>Appui long</span><select id="f-long"></select>
-          <input id="f-long-key" class="hidden" placeholder="ex. ctrl+shift+p"></label>
+          <input id="f-long-key" class="hidden" placeholder="ctrl+shift+p"></label>
       </div>
-      <p class="help">Touches : combinaisons avec <code>+</code> (ctrl, shift, alt, win, tab, enter, esc, up, down,
-        left, right, pgup, pgdn, home, end, f5, lettres, chiffres, « . » et « , »).</p>
-      <div class="actions">
-        <button type="submit" class="primary" id="save" disabled>Enregistrer</button>
-        <button type="button" class="danger" id="reset" disabled>Revenir au profil par défaut</button>
-      </div>
-    </form>
-  </section>
-  <section class="settings hidden" id="settings">
-    <div><h2>Réglages</h2><div class="help">Appliqués tout de suite au module.</div></div>
-    <h3>Écran d'accueil</h3>
-    <label class="field"><span>Tuile d'accueil</span><select id="s-home"></select></label>
-    <div class="row">
-      <label class="field"><span>Retour depuis l'app (s, 0 = jamais)</span><input type="number" min="0" max="600" id="s-app"></label>
-      <label class="field"><span>Retour depuis volume / Hue (s)</span><input type="number" min="0" max="600" id="s-other"></label>
+      <p class="help">Touches : combinaisons avec <code>+</code> — ctrl, shift, alt, win, tab, enter, esc, flèches
+        (up, down, left, right), pgup, pgdn, home, end, f5, lettres, chiffres, « . » et « , ».</p>
     </div>
-    <h3>Mode nuit</h3>
-    <div class="row">
-      <label class="field"><span>Début (heure)</span><input type="number" min="0" max="23" id="s-nstart"></label>
-      <label class="field"><span>Fin (heure)</span><input type="number" min="0" max="23" id="s-nend"></label>
+    <div class="sheet-actions">
+      <button type="submit" class="primary" id="save" disabled>Enregistrer</button>
+      <button type="button" class="danger" id="reset" disabled>Revenir au profil par défaut</button>
     </div>
-    <label class="field"><span>Luminosité de l'écran la nuit</span>
-      <div class="range-row"><input type="range" min="10" max="220" id="s-nbl"><output id="o-nbl"></output></div></label>
-    <label class="field"><span>LEDs la nuit (%)</span>
-      <div class="range-row"><input type="range" min="0" max="100" id="s-nleds"><output id="o-nleds"></output></div></label>
-    <h3>Absence</h3>
-    <label class="field"><span>Couper le son après (minutes d'absence, 0 = jamais)</span>
-      <input type="number" min="0" max="240" id="s-away"></label>
-    <div class="help">Le son est rétabli dès ton retour, sauf si tu l'avais coupé toi-même avant de partir.</div>
-    <h3>Réunion</h3>
-    <label class="inline"><input type="checkbox" id="s-silent"> Alertes silencieuses pendant un appel (rangées dans l'historique)</label>
-    <div class="actions"><button type="button" class="primary" id="s-save">Enregistrer les réglages</button>
-      <button type="button" id="s-fw">Mettre à jour le firmware</button></div>
-  </section>
-</main>
-<div class="toast" id="toast"></div>
+  </form>
 
+  <!-- Réglages généraux -->
+  <section class="sheet glass chamfer hidden" id="settings">
+    <div class="sheet-body">
+      <p class="lead">Appliqués tout de suite au module.</p>
+      <h3>Écran d'accueil</h3>
+      <label class="field"><span>Tuile d'accueil</span><select id="s-home"></select></label>
+      <div class="row">
+        <label class="field"><span>Retour depuis l'app (s, 0 = jamais)</span><input type="number" min="0" max="600" id="s-app"></label>
+        <label class="field"><span>Retour depuis volume / Hue (s)</span><input type="number" min="0" max="600" id="s-other"></label>
+      </div>
+      <h3>Mode nuit</h3>
+      <div class="row">
+        <label class="field"><span>Début (heure)</span><input type="number" min="0" max="23" id="s-nstart"></label>
+        <label class="field"><span>Fin (heure)</span><input type="number" min="0" max="23" id="s-nend"></label>
+      </div>
+      <label class="field"><span>Luminosité de l'écran la nuit</span>
+        <div class="range-row"><input type="range" min="10" max="220" id="s-nbl"><output id="o-nbl"></output></div></label>
+      <label class="field"><span>LEDs la nuit</span>
+        <div class="range-row"><input type="range" min="0" max="100" id="s-nleds"><output id="o-nleds"></output></div></label>
+      <h3>Absence</h3>
+      <label class="field"><span>Couper le son après (minutes d'absence, 0 = jamais)</span>
+        <input type="number" min="0" max="240" id="s-away"></label>
+      <div class="help">Le son revient dès ton retour, sauf si tu l'avais coupé toi-même avant de partir.</div>
+      <h3>Réunion</h3>
+      <label class="inline"><input type="checkbox" id="s-silent"> Alertes silencieuses pendant un appel (rangées dans l'historique)</label>
+    </div>
+    <div class="sheet-actions">
+      <button type="button" class="primary" id="s-save">Enregistrer les réglages</button>
+      <button type="button" id="s-fw">Mettre à jour le firmware</button>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<!-- ======================= Scène 3D : le module ======================= -->
+<script type="module">
+import * as THREE from "/static/three.module.min.js";
+
+const canvas = document.getElementById("stage");
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+} catch (e) {
+  canvas.remove();  // pas de WebGL : l'interface reste utilisable sans la scène
+  window.knob3d = { setAccent() {}, setScreen() {}, spin() {}, press() {} };
+  throw e;
+}
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#0A0F24");
+scene.fog = new THREE.Fog("#0A0F24", 9, 22);
+const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+camera.position.set(0, 1.5, 9.2);
+camera.lookAt(0, 0.3, 0);
+
+// Environnement : une sphère en dégradé, pour que l'aluminium ait des reflets crédibles.
+const pmrem = new THREE.PMREMGenerator(renderer);
+{
+  const c = document.createElement("canvas"); c.width = 16; c.height = 256;
+  const g = c.getContext("2d"), grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, "#dfe9ff"); grad.addColorStop(0.45, "#3a4f8f"); grad.addColorStop(0.55, "#0b1230"); grad.addColorStop(1, "#05070f");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  const env = new THREE.Scene();
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), side: THREE.BackSide }));
+  env.add(sky);
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.6), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  strip.position.set(0, 4, -6); env.add(strip);
+  scene.environment = pmrem.fromScene(env, 0.02).texture;
+}
+
+// ---------- Le module : socle acrylique + LEDs, bague moletée, écran rond ----------
+const knob = new THREE.Group();
+const tilt = new THREE.Group();        // inclinaison « comme sur le clavier »
+tilt.add(knob);
+tilt.rotation.x = THREE.MathUtils.degToRad(63);
+scene.add(tilt);
+
+const base = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.0, 1.02, 0.52, 96),
+  new THREE.MeshPhysicalMaterial({ color: "#d9e2f2", roughness: 0.55, metalness: 0, clearcoat: 0.6, transparent: true, opacity: 0.92 }));
+base.position.y = -0.46;
+knob.add(base);
+
+const ledGlow = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.035, 12, 120),
+  new THREE.MeshBasicMaterial({ color: "#7DF9FF", transparent: true, opacity: 0.85 }));
+ledGlow.rotation.x = Math.PI / 2; ledGlow.position.y = -0.22;
+knob.add(ledGlow);
+const leds = [];
+for (let i = 0; i < 5; i++) {
+  const a = (i / 5) * Math.PI * 2 + Math.PI / 2;
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 12), new THREE.MeshBasicMaterial({ color: "#7DF9FF" }));
+  led.position.set(Math.cos(a) * 1.0, -0.36, Math.sin(a) * 1.0);
+  knob.add(led); leds.push(led);
+}
+
+// Moletage : texture de stries générée, en relief et en rugosité.
+function knurlTexture() {
+  const c = document.createElement("canvas"); c.width = 512; c.height = 32;
+  const g = c.getContext("2d");
+  for (let x = 0; x < 512; x += 8) {
+    const grad = g.createLinearGradient(x, 0, x + 8, 0);
+    grad.addColorStop(0, "#202020"); grad.addColorStop(0.5, "#f0f0f0"); grad.addColorStop(1, "#202020");
+    g.fillStyle = grad; g.fillRect(x, 0, 8, 32);
+  }
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.repeat.set(3, 1);
+  return t;
+}
+const knurl = knurlTexture();
+const ring = new THREE.Mesh(
+  new THREE.CylinderGeometry(1.02, 1.02, 0.62, 160, 1, true),
+  new THREE.MeshStandardMaterial({ color: "#b9c2d0", metalness: 1, roughness: 0.32, bumpMap: knurl, bumpScale: 2.2, roughnessMap: knurl, side: THREE.DoubleSide }));
+ring.position.y = 0.12;
+knob.add(ring);
+const lip = new THREE.Mesh(new THREE.TorusGeometry(0.96, 0.07, 20, 160),
+  new THREE.MeshStandardMaterial({ color: "#c9d1de", metalness: 1, roughness: 0.25 }));
+lip.rotation.x = Math.PI / 2; lip.position.y = 0.43;
+knob.add(lip);
+const glassTop = new THREE.Mesh(new THREE.CylinderGeometry(0.93, 0.93, 0.04, 96),
+  new THREE.MeshPhysicalMaterial({ color: "#05070f", roughness: 0.05, metalness: 0, clearcoat: 1 }));
+glassTop.position.y = 0.42;
+knob.add(glassTop);
+
+// Écran : texture dessinée comme l'écran rond du module (240 px -> 512 px).
+const screenCanvas = document.createElement("canvas"); screenCanvas.width = screenCanvas.height = 512;
+const screenTex = new THREE.CanvasTexture(screenCanvas); screenTex.colorSpace = THREE.SRGBColorSpace;
+const screen = new THREE.Mesh(new THREE.CircleGeometry(0.86, 96), new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false }));
+screen.rotation.x = -Math.PI / 2; screen.position.y = 0.445;
+knob.add(screen);
+
+// Sol : grille holographique + halo de couleur sous le module.
+const grid = new THREE.GridHelper(40, 40, "#1d2a5c", "#14204a");
+grid.position.y = -2.1; scene.add(grid);
+const haloTex = (() => {
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d"), r = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  r.addColorStop(0, "rgba(255,255,255,.9)"); r.addColorStop(0.35, "rgba(255,255,255,.25)"); r.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = r; g.fillRect(0, 0, 256, 256); return new THREE.CanvasTexture(c);
+})();
+const halo = new THREE.Mesh(new THREE.PlaneGeometry(7, 7),
+  new THREE.MeshBasicMaterial({ map: haloTex, color: "#7DF9FF", transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+halo.rotation.x = -Math.PI / 2; halo.position.y = -2.08; scene.add(halo);
+
+// Aura holographique derrière le module, à la couleur de l'app.
+const aura = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 6.5),
+  new THREE.MeshBasicMaterial({ map: haloTex, color: "#7DF9FF", transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false }));
+aura.position.set(0, 0.35, -2.2); scene.add(aura);
+
+// Poussière lumineuse qui monte doucement.
+const dustCount = 260, dustPos = new Float32Array(dustCount * 3);
+for (let i = 0; i < dustCount; i++) {
+  dustPos[i * 3] = (Math.random() - 0.5) * 16; dustPos[i * 3 + 1] = Math.random() * 8 - 2; dustPos[i * 3 + 2] = (Math.random() - 0.5) * 10 - 1;
+}
+const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: "#7DF9FF", size: 0.035, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(dust);
+
+// Lumières : ciel froid, clé blanche, et une lumière à la couleur de l'app sous le module.
+scene.add(new THREE.HemisphereLight("#9fb8ff", "#0A0F24", 0.6));
+const key = new THREE.DirectionalLight("#ffffff", 1.6); key.position.set(-4, 6, 5); scene.add(key);
+const rim = new THREE.DirectionalLight("#7DF9FF", 1.2); rim.position.set(5, 2, -6); scene.add(rim);
+const accentLight = new THREE.PointLight("#7DF9FF", 18, 8, 2); accentLight.position.set(0, -1.2, 1.4); scene.add(accentLight);
+
+// ---------- Dessin de l'écran ----------
+const iconCache = {};
+function drawScreen(s) {
+  const g = screenCanvas.getContext("2d"), S = 512, c = S / 2;
+  g.clearRect(0, 0, S, S);
+  g.save(); g.beginPath(); g.arc(c, c, c, 0, Math.PI * 2); g.clip();
+  g.fillStyle = "#000"; g.fillRect(0, 0, S, S);
+  const start = (135 * Math.PI) / 180, span = (270 * Math.PI) / 180;
+  g.lineCap = "round"; g.lineWidth = 26;
+  g.strokeStyle = "#1A1D24"; g.beginPath(); g.arc(c, c, c - 30, start, start + span); g.stroke();
+  g.strokeStyle = s.color; g.shadowColor = s.color; g.shadowBlur = 24;
+  g.beginPath(); g.arc(c, c, c - 30, start, start + span * s.level); g.stroke(); g.shadowBlur = 0;
+  // halo + icône
+  const grad = g.createRadialGradient(c, 170, 0, c, 170, 110);
+  grad.addColorStop(0, s.color + "66"); grad.addColorStop(1, s.color + "00");
+  g.fillStyle = grad; g.beginPath(); g.arc(c, 170, 110, 0, Math.PI * 2); g.fill();
+  const img = s.icon && iconCache[s.icon];
+  if (img && img.complete) g.drawImage(img, c - 70, 100, 140, 140);
+  else { g.fillStyle = s.color; g.beginPath(); g.arc(c, 170, 62, 0, Math.PI * 2); g.fill();
+    g.fillStyle = "#04122a"; g.font = "700 64px 'Chakra Petch', 'Segoe UI Symbol'"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(s.glyph || (s.name || "?")[0].toUpperCase(), c, 172); }
+  g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.fillStyle = "#F2F4F8"; g.font = "600 40px 'Chakra Petch'"; g.fillText(fit(g, s.name, 330), c, 300);
+  g.fillStyle = s.color; g.font = "600 52px 'Chakra Petch'"; g.fillText(s.value || "", c, 366);
+  g.fillStyle = "#7C8494"; g.font = "500 27px 'Chakra Petch'"; g.fillText(fit(g, s.hint || "", 300), c, 420);
+  g.restore();
+  screenTex.needsUpdate = true;
+}
+function fit(g, text, max) {
+  if (g.measureText(text).width <= max) return text;
+  while (text.length > 1 && g.measureText(text + "…").width > max) text = text.slice(0, -1);
+  return text + "…";
+}
+
+// ---------- Animation ----------
+const accent = new THREE.Color("#7DF9FF"), accentTarget = accent.clone();
+let ringAngle = 0, ringTarget = 0, press = 0, pressTarget = 0;
+let yaw = 0, yawTarget = 0, pitch = 0, pitchTarget = 0, dragging = false, lastX = 0, lastY = 0;
+const clock = new THREE.Clock();
+
+canvas.addEventListener("pointerdown", e => { dragging = true; lastX = e.clientX; lastY = e.clientY; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  yawTarget += (e.clientX - lastX) * 0.008; pitchTarget = THREE.MathUtils.clamp(pitchTarget + (e.clientY - lastY) * 0.005, -0.5, 0.5);
+  lastX = e.clientX; lastY = e.clientY;
+});
+canvas.addEventListener("pointerup", () => { dragging = false; });
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h;
+  // Petit écran : on recule un peu pour garder le module entier.
+  const narrow = w < 1100;
+  camera.position.z = narrow ? 12.5 : 9.2;
+  // Petit écran : le module remonte dans l'espace réservé en haut de la page.
+  camera.lookAt(0, narrow ? -1.2 : 0.3, 0);
+  camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+  accent.lerp(accentTarget, 1 - Math.pow(0.02, dt));
+  [ledGlow.material, halo.material, aura.material, dust.material, ...leds.map(l => l.material)].forEach(m => m.color.copy(accent));
+  accentLight.color.copy(accent); rim.color.copy(accent).lerp(new THREE.Color("#7DF9FF"), 0.5);
+
+  ringAngle += (ringTarget - ringAngle) * (1 - Math.pow(0.004, dt));
+  ring.rotation.y = ringAngle; knurl.offset.x = ringAngle / (Math.PI * 2) * 3;
+  press += (pressTarget - press) * (1 - Math.pow(0.0001, dt));
+  if (press > pressTarget - 0.002 && pressTarget > 0) pressTarget = 0;
+  [ring, lip, glassTop, screen].forEach((m, i) => { m.position.y = [0.12, 0.43, 0.42, 0.445][i] - press * 0.12; });
+
+  const rest = reduceMotion ? 0 : Math.sin(t * 0.35) * 0.12;  // légère oscillation au repos
+  if (!dragging) yawTarget += (rest - yawTarget) * (1 - Math.pow(0.4, dt)) * 0.15;
+  if (!dragging) pitchTarget *= 1 - (1 - Math.pow(0.4, dt)) * 0.3;
+  yaw += (yawTarget - yaw) * (1 - Math.pow(0.001, dt));
+  pitch += (pitchTarget - pitch) * (1 - Math.pow(0.001, dt));
+  tilt.rotation.y = yaw; tilt.rotation.x = THREE.MathUtils.degToRad(63) + pitch;
+  tilt.position.y = reduceMotion ? 0.35 : 0.35 + Math.sin(t * 1.1) * 0.08;
+  ledGlow.material.opacity = 0.65 + 0.25 * Math.sin(t * 2.2);
+
+  if (!reduceMotion) {
+    const p = dustGeo.attributes.position;
+    for (let i = 0; i < dustCount; i++) { let y = p.getY(i) + dt * 0.12; if (y > 6) y = -2; p.setY(i, y); }
+    p.needsUpdate = true;
+  }
+  renderer.render(scene, camera);
+  publishAnchor();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// Position à l'écran du centre et du bord du module (pour relier les étiquettes).
+const _v = new THREE.Vector3();
+function project(x, y, z) {
+  _v.set(x, y, z); screen.localToWorld(_v); _v.project(camera);
+  return { x: (_v.x + 1) / 2 * innerWidth, y: (1 - _v.y) / 2 * innerHeight };
+}
+function publishAnchor() {
+  const c = project(0, 0, 0), e = project(1.02, 0, 0), n = project(0, 1.02, 0);
+  window.knobAnchor = { x: c.x, y: c.y, rx: Math.hypot(e.x - c.x, e.y - c.y), ry: Math.hypot(n.x - c.x, n.y - c.y) };
+  window.dispatchEvent(new Event("knob-anchor"));
+}
+
+window.knob3d = {
+  setAccent(hex) { accentTarget.set(hex); },
+  setScreen(s) {
+    if (s.icon && !iconCache[s.icon]) { const im = new Image(); im.onload = () => drawScreen(s); im.src = s.icon; iconCache[s.icon] = im; }
+    drawScreen(s);
+  },
+  spin(dir = 1) { ringTarget += dir * Math.PI / 3; },       // la bague tourne d'un cran visible
+  press(long = false) { pressTarget = long ? 1 : 0.6; },     // la bague s'enfonce
+};
+document.fonts?.ready.then(() => window.dispatchEvent(new Event("knob3d-ready")));
+window.dispatchEvent(new Event("knob3d-ready"));
+</script>
+
+<!-- ======================= Logique de l'éditeur ======================= -->
 <script>
 const $ = id => document.getElementById(id);
-let state = null, current = null;
+let state = null, current = null, lastBindings = {};
 
 const KNOB_LABELS = { auto: "Auto (volume de l'app si elle joue du son)", appvol: "Volume de l'app",
   master: "Volume général", scroll: "Défilement", keys: "Touches à chaque cran", media: "Pistes (suivante / précédente)",
   app: "Comme l'app au premier plan", local: "Défaut de la tuile", none: "Rien" };
+const KNOB_SHORT = { auto: "Volume auto", appvol: "Volume de l'app", master: "Volume général", scroll: "Défilement",
+  keys: "Touches", media: "Piste suivante / préc.", app: "Comme l'app", local: "Défaut de la tuile", none: "Rien" };
+// Libellés lisibles (ceux du module sont sans accents, sa police n'en a pas).
+const PRETTY = { "playpause": "Lecture / pause", "next": "Piste suivante", "prev": "Piste précédente", "mute": "Couper le son",
+  "appmute": "Couper l'app", "toggle:appvol": "Basculer sur le volume", "bambu:camera": "Caméra de l'imprimante",
+  "bambu:next": "Imprimante suivante", "local": "Défaut de la tuile", "app": "Comme l'app au premier plan",
+  "audio": "Choix de la sortie audio", "media:lock": "Mode dédié", "key:ctrl+tab": "Onglet suivant",
+  "key:ctrl+s": "Enregistrer", "key:ctrl+shift+m": "Couper le micro", "key:alt+up": "Dossier parent",
+  "key:enter": "Entrée", "key:ctrl+r": "Trancher", "key:ctrl+shift+o": "Nouveau chat", "key:esc": "Échap",
+  "key:ctrl+k": "Recherche", "key:ctrl+q": "Marquer comme lu" };
+const pretty = ([v, l]) => [v, PRETTY[v] || l];
+const WIDGETS = { "": "Aucun", media: "Média (titre, pochette)", bambu: "Imprimantes Bambu", claude: "Statut Claude Code" };
 const isTile = exe => exe.startsWith("_tile_");
 const TILE_HELP = { _tile_volume: "Défaut : molette = volume général, clic = couper le son, appui long = sortie audio",
   _tile_dashboard: "Défaut : clic = historique des alertes", _tile_network: "Tuile d'affichage : rien par défaut",
   _tile_system: "Tuile d'affichage : rien par défaut" };
-
-function knobChoices(exe) {
-  const keys = isTile(exe) ? ["local", "app", "master", "appvol", "scroll", "keys", "media", "none"]
-                           : ["auto", "appvol", "master", "scroll", "keys", "media", "none"];
-  return keys.map(k => [k, KNOB_LABELS[k]]);
-}
-
-function actionChoices(exe) {
-  const acts = state.options.actions.filter(([v]) => isTile(exe) || !["local", "app"].includes(v));
-  return [["", "Rien"], ...acts, ["key:", "Touche personnalisée…"]];
-}
-const WIDGETS = { "": "Aucun", media: "Média (titre, pochette)", bambu: "Imprimantes Bambu", claude: "Statut Claude Code" };
+const TILE_LABELS = { app: "Application", volume: "Volume", dashboard: "Tableau de bord", network: "Réseau",
+  system: "Système", hue: "Hue" };
 
 async function api(path, body) {
   const opts = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Knob": "1" },
@@ -208,17 +543,20 @@ async function api(path, body) {
 
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1800);
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1900);
 }
 
-function effective(exe) {
-  return { ...(state.overrides[exe] || state.defaults[exe] || {}) };
+const effective = exe => ({ ...(state.overrides[exe] || state.defaults[exe] || {}) });
+function fillSelect(sel, entries) { sel.innerHTML = entries.map(([v, l]) => `<option value="${v}">${l}</option>`).join(""); }
+function knobChoices(exe) {
+  const keys = isTile(exe) ? ["local", "app", "master", "appvol", "scroll", "keys", "media", "none"]
+                           : ["auto", "appvol", "master", "scroll", "keys", "media", "none"];
+  return keys.map(k => [k, KNOB_LABELS[k]]);
 }
-
-function fillSelect(sel, entries) {
-  sel.innerHTML = entries.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+function actionChoices(exe) {
+  const acts = state.options.actions.filter(([v]) => isTile(exe) || !["local", "app"].includes(v));
+  return [["", "Rien"], ...acts.map(pretty), ["key:", "Touche personnalisée…"]];
 }
-
 function iconHtml(app) {
   if (app.icon) return `<img src="${app.icon}" alt="">`;
   return `<div class="mono" style="background:${app.color}">${(app.name || "?")[0].toUpperCase()}</div>`;
@@ -231,20 +569,23 @@ function renderList() {
                   ["Spécial", state.apps.filter(a => a.exe.startsWith("_") && !isTile(a.exe))],
                   ["Avec profil", state.apps.filter(a => !a.exe.startsWith("_") && a.hasProfile)],
                   ["Vues récemment", state.apps.filter(a => !a.hasProfile && !a.exe.startsWith("_"))]];
-  const settingsItem = `<div class="app ${current === "__settings" ? "sel" : ""}" data-exe="__settings">
-      <div class="mono" style="background:#22d3ee22;color:#22d3ee">&#9881;</div>
-      <div class="meta"><div class="name">Réglages</div><div class="exe">accueil, nuit, réunion</div></div></div>`;
+  const settingsItem = `<div class="app ${current === "__settings" ? "sel" : ""}" data-exe="__settings" tabindex="0" style="--c:#7DF9FF">
+      <div class="mono" style="background:rgba(125,249,255,.14);color:#7DF9FF">&#9881;</div>
+      <div><div class="name">Réglages</div><div class="exe">Accueil, nuit, absence, réunion</div></div><span></span></div>`;
   $("list").innerHTML = settingsItem + groups.map(([label, apps]) => {
     apps = apps.filter(match);
     if (!apps.length) return "";
     return `<div class="group">${label}</div>` + apps.map(a => `
-      <div class="app ${current === a.exe ? "sel" : ""}" data-exe="${a.exe}">
+      <div class="app ${current === a.exe ? "sel" : ""}" data-exe="${a.exe}" tabindex="0" style="--c:${a.color}">
         ${iconHtml(a)}
-        <div class="meta"><div class="name">${a.name}</div><div class="exe">${a.seen ? '<span class="seen" title="Vue au premier plan depuis le démarrage">&#9679;</span> ' : ""}${a.exe}</div></div>
-        ${state.overrides[a.exe] ? '<span class="badge">perso</span>' : ""}
+        <div><div class="name">${a.name}</div><div class="exe">${a.seen ? '<span class="seen" title="Vue au premier plan depuis le démarrage">&#9679;</span> ' : ""}${a.exe}</div></div>
+        ${state.overrides[a.exe] ? '<span class="badge">perso</span>' : "<span></span>"}
       </div>`).join("");
   }).join("");
-  document.querySelectorAll(".app").forEach(el => el.onclick = () => select(el.dataset.exe));
+  document.querySelectorAll(".app").forEach(el => {
+    el.onclick = () => select(el.dataset.exe);
+    el.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.exe); } };
+  });
 }
 
 function setAction(prefix, value) {
@@ -254,43 +595,54 @@ function setAction(prefix, value) {
   else { sel.value = value ?? ""; key.value = ""; }
   key.classList.toggle("hidden", sel.value !== "key:");
 }
-
 function getAction(prefix) {
   const v = $(`f-${prefix}`).value;
   if (v === "key:") { const k = $(`f-${prefix}-key`).value.trim(); return k ? "key:" + k : null; }
   return v || null;
 }
-
-const TILE_LABELS = { app: "Application", volume: "Volume", dashboard: "Tableau de bord", network: "Réseau",
-                      system: "Système", hue: "Hue" };
+function labelOf(action) {
+  if (!action) return "";
+  if (PRETTY[action]) return PRETTY[action];
+  const found = state.options.actions.find(([v]) => v === action);
+  return found ? found[1] : action.replace("key:", "");
+}
 
 function showSettings() {
   current = "__settings";
-  document.querySelector("section.editor").classList.add("hidden");
-  $("settings").classList.remove("hidden");
+  $("form").classList.add("hidden"); $("settings").classList.remove("hidden");
   const s = state.settings;
   fillSelect($("s-home"), state.tiles.map(t => [t, TILE_LABELS[t] || t]));
   $("s-home").value = s.home_tile; $("s-app").value = s.app_return_s; $("s-other").value = s.other_return_s;
   $("s-nstart").value = s.night_start; $("s-nend").value = s.night_end;
-  $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent; $("s-away").value = s.away_mute_min;
+  $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent;
+  $("s-away").value = s.away_mute_min;
+  $("title").textContent = "Réglages"; $("exe").textContent = "Accueil, nuit, absence et réunion";
+  $("co-turn").textContent = TILE_LABELS[s.home_tile] || "—"; $("co-click").textContent = `${s.night_start} h → ${s.night_end} h`;
+  $("co-long").textContent = s.away_mute_min ? `Son coupé après ${s.away_mute_min} min` : "Jamais coupé";
+  document.querySelector(".c-turn .k").textContent = "Accueil";
+  document.querySelector(".c-click .k").textContent = "Mode nuit";
+  document.querySelector(".c-long .k").textContent = "Absence";
+  setAccent("#7DF9FF");
+  window.knob3d?.setScreen({ name: "Réglages", value: "", hint: "triple clic", color: "#7DF9FF", level: 1, icon: null, glyph: "⚙" });
   syncOutputs(); renderList();
 }
-
-function syncOutputs() { $("o-nbl").textContent = $("s-nbl").value; $("o-nleds").textContent = $("s-nleds").value + "%"; }
-
+function syncOutputs() { $("o-nbl").textContent = $("s-nbl").value; $("o-nleds").textContent = $("s-nleds").value + " %"; }
 async function saveSettings() {
   const body = { home_tile: $("s-home").value, app_return_s: +$("s-app").value, other_return_s: +$("s-other").value,
                  night_start: +$("s-nstart").value, night_end: +$("s-nend").value,
-                 night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked, away_mute_min: +$("s-away").value };
+                 night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked,
+                 away_mute_min: +$("s-away").value };
   const res = await api("/api/settings", body);
-  state.settings = res.settings; toast("Réglages enregistrés");
+  state.settings = res.settings; toast("Réglages enregistrés"); showSettings();
 }
 
 function select(exe) {
   if (exe === "__settings") return showSettings();
-  document.querySelector("section.editor").classList.remove("hidden");
-  $("settings").classList.add("hidden");
-  current = exe;
+  $("form").classList.remove("hidden"); $("settings").classList.add("hidden");
+  document.querySelector(".c-turn .k").textContent = "Tourner";
+  document.querySelector(".c-click .k").textContent = "Clic";
+  document.querySelector(".c-long .k").textContent = "Appui long";
+  current = exe; lastBindings = {};
   const app = state.apps.find(a => a.exe === exe);
   const p = effective(exe);
   $("title").textContent = app.name;
@@ -309,7 +661,14 @@ function select(exe) {
   setAction("click", p.click); setAction("long", p.long);
   $("save").disabled = false;
   $("reset").disabled = !state.overrides[exe];
-  renderList(); updatePreview();
+  renderList(); updatePreview(true);
+  // Garde l'app choisie visible en ne faisant défiler que la liste (pas la page).
+  const list = $("list"), el = list.querySelector(`.app[data-exe="${CSS.escape(exe)}"]`);
+  if (el) {
+    const top = el.offsetTop - list.offsetTop;
+    if (top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight)
+      list.scrollTop = top - list.clientHeight / 2 + el.offsetHeight / 2;
+  }
 }
 
 function collect() {
@@ -332,31 +691,53 @@ function collect() {
   return p;
 }
 
-function labelOf(action) {
-  if (!action) return "";
-  const found = state.options.actions.find(([v]) => v === action);
-  return found ? found[1].toLowerCase() : action.replace("key:", "");
+function setAccent(hex) {
+  document.documentElement.style.setProperty("--accent", hex);
+  window.knob3d?.setAccent(hex);
 }
 
-function updatePreview() {
-  if (!current) return;
+function updatePreview(fresh = false) {
+  if (!current || current === "__settings") return;
   const app = state.apps.find(a => a.exe === current);
   const p = collect();
   const color = p.color ? "#" + p.color : app.color;
-  $("arc").setAttribute("stroke", color);
-  $("halo").style.background = color + "33";
-  $("halo").style.boxShadow = `0 0 26px ${color}88`;
-  $("picon").src = app.icon || "";
-  $("picon").style.visibility = app.icon ? "visible" : "hidden";
-  $("pname").textContent = p.name || app.name;
   const knob = $("f-knob").value;
-  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", master: "42%", appvol: "42%", auto: "42%",
-                           local: "42%", app: "▲  ▼", none: "" }[knob] ?? "";
-  $("pval").style.color = color;
-  $("phint").textContent = p.click ? "clic : " + labelOf(p.click) : "";
   $("keys-row").classList.toggle("hidden", knob !== "keys");
-  $("legend").innerHTML = `Tourner : <b>${KNOB_LABELS[knob]}</b><br>Clic : <b>${labelOf(p.click) || "rien"}</b>
-    · Appui long : <b>${labelOf(p.long) || "rien"}</b>`;
+  const b = { turn: knob === "keys" ? `${p.cw || "?"} / ${p.ccw || "?"}` : KNOB_SHORT[knob],
+              click: labelOf(p.click) || "Rien", long: labelOf(p.long) || "Rien" };
+  $("co-turn").textContent = b.turn; $("co-click").textContent = b.click; $("co-long").textContent = b.long;
+  // Le module réagit à ce qui change : la bague tourne, s'enfonce, l'étiquette s'allume.
+  if (!fresh) {
+    if (b.turn !== lastBindings.turn) { window.knob3d?.spin(); flash("c-turn"); }
+    if (b.click !== lastBindings.click) { window.knob3d?.press(false); flash("c-click"); }
+    if (b.long !== lastBindings.long) { window.knob3d?.press(true); flash("c-long"); }
+  }
+  lastBindings = b;
+  setAccent(color);
+  const value = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", none: "", app: "▲  ▼" }[knob] ?? "42%";
+  window.knob3d?.setScreen({ name: p.name || app.name, value, hint: p.click ? "clic : " + labelOf(p.click).toLowerCase() : "",
+                             color, level: ["scroll", "keys", "app", "none"].includes(knob) ? 0.16 : 0.42, icon: app.icon });
+}
+// Traits entre chaque étiquette et le bord du module, recalculés à chaque image 3D.
+const WIRE_ANGLES = { "c-turn": Math.PI, "c-click": -Math.PI / 4, "c-long": Math.PI / 4 };
+addEventListener("knob-anchor", () => {
+  const a = window.knobAnchor, svg = $("wires");
+  if (!a || innerWidth < 1100) { svg.innerHTML = ""; return; }
+  let out = "";
+  for (const [cls, ang] of Object.entries(WIRE_ANGLES)) {
+    const el = document.querySelector("." + cls);
+    if (!el || el.offsetParent === null) continue;
+    const r = el.getBoundingClientRect();
+    const px = a.x + Math.cos(ang) * a.rx * 1.02, py = a.y + Math.sin(ang) * a.ry * 1.02;
+    const ex = cls === "c-turn" ? r.right : r.left, ey = r.top + r.height / 2;
+    out += `<line x1="${ex}" y1="${ey}" x2="${px}" y2="${py}"/><circle cx="${px}" cy="${py}" r="3.5"/>`;
+  }
+  svg.innerHTML = out;
+});
+
+function flash(cls) {
+  const el = document.querySelector("." + cls);
+  el.classList.add("flash"); clearTimeout(el._f); el._f = setTimeout(() => el.classList.remove("flash"), 700);
 }
 
 async function save(e) {
@@ -365,9 +746,9 @@ async function save(e) {
   state.overrides[current] = collect();
   await api("/api/profiles", { overrides: state.overrides });
   const app = state.apps.find(a => a.exe === current); app.hasProfile = true;
-  $("reset").disabled = false; renderList(); toast("Profil enregistré — appliqué tout de suite");
+  $("reset").disabled = false; renderList(); toast("Profil enregistré, appliqué tout de suite");
+  window.knob3d?.press(false);
 }
-
 async function reset() {
   delete state.overrides[current];
   await api("/api/profiles", { overrides: state.overrides });
@@ -377,20 +758,23 @@ async function reset() {
 async function load() {
   state = await api("/api/state");
   fillSelect($("f-widget"), Object.entries(WIDGETS));
-  $("status").textContent = state.connected ? `Module connecté (${state.port})` : "Module non connecté";
+  $("status").textContent = state.connected ? `Module connecté sur ${state.port}` : "Module non connecté";
+  $("status-wrap").classList.toggle("on", !!state.connected);
   renderList();
-  select(state.current && state.apps.some(a => a.exe === state.current) ? state.current : "_default");
+  select(state.current && state.apps.some(a => a.exe === state.current) ? state.current : "_tile_volume");
 }
 
 $("q").oninput = renderList;
+$("form").onsubmit = save;
+$("reset").onclick = reset;
+$("form").oninput = () => updatePreview();
+for (const p of ["click", "long"])
+  $(`f-${p}`).addEventListener("change", () => $(`f-${p}-key`).classList.toggle("hidden", $(`f-${p}`).value !== "key:"));
 $("s-save").onclick = saveSettings;
 $("s-fw").onclick = async () => { await api("/api/firmware", {}); toast("Mise à jour du firmware lancée (environ 30 s)"); };
 $("s-nbl").oninput = syncOutputs; $("s-nleds").oninput = syncOutputs;
-$("form").onsubmit = save;
-$("reset").onclick = reset;
-$("form").oninput = updatePreview;
-for (const p of ["click", "long"])
-  $(`f-${p}`).addEventListener("change", () => $(`f-${p}-key`).classList.toggle("hidden", $(`f-${p}`).value !== "key:"));
+// La scène 3D se charge en module (après ce script) : on redessine l'écran quand elle est prête.
+addEventListener("knob3d-ready", () => { if (current === "__settings") showSettings(); else if (current) updatePreview(true); });
 load().catch(e => { $("status").textContent = "Compagnon injoignable (" + e.message + ")"; });
 </script>
 </body>

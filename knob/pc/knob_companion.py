@@ -462,6 +462,7 @@ class Companion:
         self.away_muted = False     # son coupé par nous pour absence (à rétablir au retour)
         self.write_lock = threading.Lock()
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
+        self.editor_icon_misses = set()
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
         self.reload_requested = False
         self.ask_shown = None      # id de la demande de permission affichée
@@ -1017,7 +1018,25 @@ class Companion:
             self.ask_shown = None
 
     # --- éditeur de profils (serveur local)
+    def editor_icon(self, exe, running):
+        """Icône et couleur d'une app pas encore vue au premier plan, si elle tourne (pour l'éditeur)."""
+        path = running.get(exe)
+        if not path or exe in self.editor_icon_misses:
+            return
+        img = load_exe_icon(path)
+        if img is None:
+            self.editor_icon_misses.add(exe)
+            return
+        buf = io.BytesIO()
+        img.resize((48, 48), Image.LANCZOS).save(buf, "PNG")
+        self.png_cache[exe] = ("data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+                               "#" + hex_color(accent_from_icon(img)))
+
     def editor_state(self):
+        running = {}
+        for proc in psutil.process_iter(["name", "exe"]):
+            if proc.info["name"] and proc.info["exe"]:
+                running.setdefault(proc.info["name"].lower(), proc.info["exe"])
         overrides = {}
         try:
             overrides = {k.lower(): v for k, v in
@@ -1032,6 +1051,8 @@ class Companion:
         apps = []
         for exe in sorted(set(defaults) | set(overrides) | set(self.recent)):
             prof = overrides.get(exe) or defaults.get(exe) or {}
+            if exe not in self.png_cache and not exe.startswith("_"):
+                self.editor_icon(exe, running)
             icon, color = self.png_cache.get("desktop" if exe == "_desktop" else exe, (None, "#22D3EE"))
             name = special.get(exe) or prof.get("name") or self.recent.get(exe) or Path(exe).stem.capitalize()
             apps.append({"exe": exe, "name": name, "icon": icon, "color": color,

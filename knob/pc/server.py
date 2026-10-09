@@ -45,6 +45,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._host_ok():
             return self._send(403, {"error": "host"})
+        if self.path.startswith("/static/"):
+            # Fichiers statiques de l'éditeur (Three.js…) : noms simples uniquement, pas de chemin.
+            name = self.path[len("/static/"):]
+            path = HERE / "static" / name
+            if "/" in name or "\\" in name or ".." in name or not path.is_file():
+                return self._send(404, {"error": "not found"})
+            ctype = "text/javascript; charset=utf-8" if name.endswith(".js") else "application/octet-stream"
+            return self._send(200, path.read_bytes(), ctype)
         if self.path in ("/", "/index.html"):
             return self._send(200, (HERE / "editor.html").read_bytes(), "text/html; charset=utf-8")
         if self.path == "/api/ping":
