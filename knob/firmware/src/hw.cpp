@@ -52,9 +52,12 @@ int hwTakeEncoderSteps() {
   return steps;
 }
 
+#define MULTI_CLICK_MS 300
+
 ButtonEvent hwPollButton() {
   static bool down = false, longFired = false;
-  static unsigned long downAt = 0, lastEdge = 0;
+  static unsigned long downAt = 0, lastEdge = 0, lastRelease = 0;
+  static int clicks = 0;
   bool pressed = digitalRead(ENC_SW) == LOW;
   unsigned long now = millis();
   if (pressed != down && now - lastEdge > 25) {
@@ -64,12 +67,19 @@ ButtonEvent hwPollButton() {
       downAt = now;
       longFired = false;
     } else if (!longFired) {
-      return BTN_CLICK;
+      clicks++;  // rendu plus tard, une fois la série de clics terminée
+      lastRelease = now;
     }
   }
   if (down && !longFired && now - downAt > LONG_PRESS_MS) {
     longFired = true;
+    clicks = 0;  // un appui long annule une série de clics en cours
     return BTN_LONG;
+  }
+  if (clicks && !down && now - lastRelease > MULTI_CLICK_MS) {
+    int n = clicks;
+    clicks = 0;
+    return n >= 3 ? BTN_TRIPLE : n == 2 ? BTN_DOUBLE : BTN_CLICK;
   }
   return BTN_NONE;
 }

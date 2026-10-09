@@ -14,6 +14,7 @@ DEFAULTS = {
     "night_backlight": 90,      # luminosité de l'écran la nuit (0-220)
     "night_leds": 25,           # LEDs la nuit, en % (0-100)
     "meeting_silent": True,     # alertes silencieuses (historique seulement) pendant une réunion
+    "away_mute_min": 10,        # coupe le son après N minutes d'absence (0 = jamais), rétabli au retour
 }
 
 

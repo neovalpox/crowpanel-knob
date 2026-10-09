@@ -31,7 +31,8 @@
 //                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
 //                  "X<id>\t<titre>\t<détail>\t<LIB,rrggbb|...>"  question à choix ; "x<id>" la ferme
 //   module -> PC : "H" (bonjour), "Q<tuile>", "R<crans>", "C" (clic), "L" (appui long),
-//                  "x<id> <index>" (réponse, -1 = rendre la main au terminal), "o<i>" (raccourci lancé)
+//                  "x<id> <index>" (réponse, -1 = rendre la main au terminal), "o<i>" (raccourci lancé),
+//                  "T" (triple clic : ouvrir l'éditeur)
 #include <Arduino.h>
 #include "USBHIDConsumerControl.h"
 #include "hw.h"
@@ -307,13 +308,20 @@ static void pollLink() {
   }
 }
 
+// Triple clic : le PC ouvre l'éditeur de profils dans le navigateur.
+static void openEditor() {
+  if (!synced) return;
+  usbSerial.print("T\n");
+  uiFlash(LV_SYMBOL_SETTINGS);
+}
+
 static void handleKnob() {
   int steps = hwTakeEncoderSteps();
   // Lanceur radial ouvert : la molette choisit, le clic lance, l'appui long ferme.
   if (uiLauncherVisible()) {
     if (steps) uiLauncherRotate(steps);
     ButtonEvent b = hwPollButton();
-    if (b == BTN_CLICK) {
+    if (b == BTN_CLICK || b == BTN_DOUBLE || b == BTN_TRIPLE) {
       usbSerial.printf("o%d\n", uiLauncherIndex());
       uiLauncherClose();
       uiFlash(LV_SYMBOL_OK);
@@ -339,7 +347,7 @@ static void handleKnob() {
     }
     ButtonEvent b = hwPollButton();
     if (b != BTN_NONE) {
-      usbSerial.printf("x%d %d\n", uiAskId(), b == BTN_CLICK ? uiAskIndex() : -1);
+      usbSerial.printf("x%d %d\n", uiAskId(), b == BTN_LONG ? -1 : uiAskIndex());
       uiAskClose();
     }
     return;
@@ -351,10 +359,13 @@ static void handleKnob() {
       usbSerial.printf("R%d\n", steps);
     }
     ButtonEvent b = hwPollButton();
-    if (b == BTN_CLICK && uiNotifyVisible())
+    if (b == BTN_TRIPLE) {
+      openEditor();
+    } else if (b != BTN_NONE && b != BTN_LONG && uiNotifyVisible()) {
       uiNotifyDismiss();
-    else if (b != BTN_NONE)
-      usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
+    } else if (b != BTN_NONE) {
+      usbSerial.print(b == BTN_LONG ? "L\n" : "C\n");  // double clic = un seul play/pause
+    }
     return;
   }
   Tile t = uiTile();
@@ -374,17 +385,26 @@ static void handleKnob() {
   if (b == BTN_NONE) return;
   lv_disp_trig_activity(NULL);
   uiWake();
-  if (b == BTN_CLICK && uiNotifyVisible()) {
+  if (b == BTN_TRIPLE) {
+    openEditor();
+    return;
+  }
+  if (b != BTN_LONG && uiNotifyVisible()) {
     uiNotifyDismiss();
     return;
   }
+  // Un double clic garde le comportement de deux clics (ex. deux onglets plus loin).
+  int repeat = b == BTN_DOUBLE ? 2 : 1;
+  if (b == BTN_DOUBLE) b = BTN_CLICK;
   uint8_t what = b == BTN_CLICK ? LOCAL_CLICK : LOCAL_LONG;
-  if (!isLocal(t, what)) {
-    usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
-  } else if (b == BTN_CLICK && (t == TILE_VOL || !synced)) {
-    hwSendMediaKey(CONSUMER_CONTROL_MUTE);
-  } else if (b == BTN_CLICK && t == TILE_DASH) {
-    uiHistoryOpen();  // clic sur le tableau de bord : historique des alertes
+  for (int i = 0; i < repeat; i++) {
+    if (!isLocal(t, what)) {
+      usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
+    } else if (b == BTN_CLICK && (t == TILE_VOL || !synced)) {
+      hwSendMediaKey(CONSUMER_CONTROL_MUTE);
+    } else if (b == BTN_CLICK && t == TILE_DASH && i == 0) {
+      uiHistoryOpen();  // clic sur le tableau de bord : historique des alertes
+    }
   }
 }
 

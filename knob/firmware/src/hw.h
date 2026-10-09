@@ -7,7 +7,9 @@
 void hwBegin();            // alimentation, écran, LVGL, tactile, molette, LEDs, USB
 int hwTakeEncoderSteps();  // crans tournés depuis le dernier appel (+ = horaire)
 
-enum ButtonEvent { BTN_NONE, BTN_CLICK, BTN_LONG };
+// Les clics sont regroupés : un clic n'est rendu qu'après 300 ms sans autre appui,
+// pour distinguer simple, double et triple clic.
+enum ButtonEvent { BTN_NONE, BTN_CLICK, BTN_LONG, BTN_DOUBLE, BTN_TRIPLE };
 ButtonEvent hwPollButton();
 
 void hwSendMediaKey(uint16_t usage);  // touche multimédia HID (volume, mute, play...)

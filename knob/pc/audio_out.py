@@ -123,6 +123,27 @@ def _sonar_virtual(base, channel_name):
     return None
 
 
+def master_muted():
+    """Son général coupé ? (master de Sonar s'il route le son, sinon sortie Windows)."""
+    base = sonar_base()
+    if base:
+        return bool(_http("GET", f"{base}/volumeSettings/classic")["masters"]["classic"].get("muted"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return bool(AudioUtilities.GetSpeakers().EndpointVolume.GetMute())
+
+
+def set_master_mute(on):
+    """Coupe / rétablit tout le son : avec Sonar, la sortie Windows ne couperait que le canal Game."""
+    base = sonar_base()
+    if base:
+        _http("PUT", f"{base}/volumeSettings/classic/master/Mute/{'true' if on else 'false'}")
+        return
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        AudioUtilities.GetSpeakers().EndpointVolume.SetMute(1 if on else 0, None)
+
+
 def set_default(dev_id):
     base = sonar_base()
     if base:

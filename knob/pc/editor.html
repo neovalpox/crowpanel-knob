@@ -162,6 +162,10 @@
       <div class="range-row"><input type="range" min="10" max="220" id="s-nbl"><output id="o-nbl"></output></div></label>
     <label class="field"><span>LEDs la nuit (%)</span>
       <div class="range-row"><input type="range" min="0" max="100" id="s-nleds"><output id="o-nleds"></output></div></label>
+    <h3>Absence</h3>
+    <label class="field"><span>Couper le son après (minutes d'absence, 0 = jamais)</span>
+      <input type="number" min="0" max="240" id="s-away"></label>
+    <div class="help">Le son est rétabli dès ton retour, sauf si tu l'avais coupé toi-même avant de partir.</div>
     <h3>Réunion</h3>
     <label class="inline"><input type="checkbox" id="s-silent"> Alertes silencieuses pendant un appel (rangées dans l'historique)</label>
     <div class="actions"><button type="button" class="primary" id="s-save">Enregistrer les réglages</button>
@@ -268,7 +272,7 @@ function showSettings() {
   fillSelect($("s-home"), state.tiles.map(t => [t, TILE_LABELS[t] || t]));
   $("s-home").value = s.home_tile; $("s-app").value = s.app_return_s; $("s-other").value = s.other_return_s;
   $("s-nstart").value = s.night_start; $("s-nend").value = s.night_end;
-  $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent;
+  $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent; $("s-away").value = s.away_mute_min;
   syncOutputs(); renderList();
 }
 
@@ -277,7 +281,7 @@ function syncOutputs() { $("o-nbl").textContent = $("s-nbl").value; $("o-nleds")
 async function saveSettings() {
   const body = { home_tile: $("s-home").value, app_return_s: +$("s-app").value, other_return_s: +$("s-other").value,
                  night_start: +$("s-nstart").value, night_end: +$("s-nend").value,
-                 night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked };
+                 night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked, away_mute_min: +$("s-away").value };
   const res = await api("/api/settings", body);
   state.settings = res.settings; toast("Réglages enregistrés");
 }

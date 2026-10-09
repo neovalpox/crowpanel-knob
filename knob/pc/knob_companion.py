@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 import unicodedata
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -458,6 +459,7 @@ class Companion:
         self.last_lock_info = 0
         self.lock_sent = {}
         self.pending_lock = None    # verrouillage demandé par l'API (traité dans la boucle)
+        self.away_muted = False     # son coupé par nous pour absence (à rétablir au retour)
         self.write_lock = threading.Lock()
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
@@ -785,6 +787,24 @@ class Companion:
         self.send_once("Z", z + "\n")
 
     # --- réunion (une app utilise le micro)
+    def check_away_mute(self):
+        """Coupe tout le son après N min d'absence ; le rétablit au retour si c'est nous qui l'avions coupé."""
+        minutes = self.settings["away_mute_min"]
+        locked, idle = is_locked(), idle_seconds()
+        if self.away_muted:
+            if not locked and idle < 5:  # retour devant le PC
+                self.away_muted = False
+                if audio_out.master_muted():
+                    audio_out.set_master_mute(False)
+                    self.notify("", "Son retabli", "bon retour !", "22D3EE")
+                log.info("retour : son rétabli")
+        elif minutes and idle >= minutes * 60:  # l'inactivité continue de compter session verrouillée
+            if not audio_out.master_muted():  # déjà coupé à la main : on n'y touche pas
+                audio_out.set_master_mute(True)
+                self.away_muted = True
+                self.send(f"n\tSon coupe\tabsent depuis {minutes} min\t7C8494\n")
+                log.info("absent depuis %d min : son coupé", minutes)
+
     def push_meeting(self):
         st, label = meeting.state()
         self.meeting_state = st
@@ -1178,6 +1198,9 @@ class Companion:
                 self.permissions.answer(int(rid), int(idx))
                 if self.ask_shown == int(rid):
                     self.ask_shown = None
+            elif msg == "T":  # triple clic sur la molette : éditeur de profils
+                webbrowser.open(f"http://127.0.0.1:{server.PORT}/")
+                log.info("éditeur ouvert (triple clic)")
             elif self.locked and msg[0] in "RCL":
                 # Mode dédié : molette = pistes, clic = lecture/pause, appui long = déverrouiller.
                 if msg[0] == "R":
@@ -1193,7 +1216,7 @@ class Companion:
             elif msg[0] == "M":
                 # Diagnostic du module : journalisé au démarrage, ou si le rendu devient lent.
                 slow = re.search(r"rendu_max=(\d+)", msg)
-                if not slow or int(slow.group(1)) > 80:
+                if not slow or int(slow.group(1)) > 150:
                     log.info("module : tas %s", msg[1:])
                 self.last_perf = msg[1:]
             elif self.tile == TILE_HUE and msg[0] in "RCL":
@@ -1261,6 +1284,7 @@ class Companion:
             self.guarded(self.push_home)
             self.guarded(self.push_tile_config)
             self.guarded(self.push_meeting)
+            self.guarded(self.check_away_mute)
         self.guarded(self.push_camera)
         if self.pending_lock is not None:  # demandé par l'API locale
             want, self.pending_lock = self.pending_lock, None
