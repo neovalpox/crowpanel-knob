@@ -53,9 +53,9 @@
     <div class="plus">+ un PC Windows · support 3D imprimable en option</div>
   </div>
   <div class="t end" id="end">
-    <div class="made">Développé avec Claude</div>
+    <div class="made">Libre et open source</div>
     <div class="repo">github.com/neovalpox/crowpanel-knob</div>
-    <div class="sub">Open source · firmware, compagnon PC et supports 3D</div>
+    <div class="sub">Firmware, compagnon PC et supports 3D</div>
   </div>
   <div class="flash" id="flash"></div>
 </div>
@@ -144,6 +144,9 @@ const hatEnv = t => { if (t < 4 || (t >= 38 && t < 42) || t >= 45) return 0; con
 const arpEnv = t => t < 2 ? 0 : Math.exp(-((t % .125) / .125) * 4) * (t >= 38 && t < 42 ? .6 : 1);
 
 // ---------- Dessin de l'écran ----------
+// Symboles dessinés sur l'écran (codes Unicode, pour garder le source en ASCII).
+const SYM = { warn: String.fromCharCode(0x26A0), ok: String.fromCharCode(0x2713), bolt: String.fromCharCode(0x26A1),
+              play: String.fromCharCode(0x25B6) };
 const g = screenCanvas.getContext("2d"), S = 512, C = S / 2;
 function screenBase() { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S); g.save(); g.beginPath(); g.arc(C, C, C, 0, Math.PI * 2); g.clip(); g.fillStyle = "#000"; g.fillRect(0, 0, S, S); }
 function arc(color, level, full = false, width = 26) {
@@ -185,11 +188,11 @@ const SCREENS = {
     text("H2D", 290, 40, "#F2F4F8"); text(Math.round(p * 100) + "%", 360, 60, "#3DDC84", 700); text("1h12 - couche 87/214", 418, 27, "#7C8494", 500); },
   ask(t, a) {
     g.strokeStyle = a.color; g.lineWidth = 12; g.shadowColor = a.color; g.shadowBlur = 24; g.beginPath(); g.arc(C, C, C - 14, 0, Math.PI * 2); g.stroke(); g.shadowBlur = 0;
-    text("⚠", 120, 60, "#FFB020", 700); text("Claude - crowpanel-knob", 180, 27, "#7C8494", 500);
+    text(SYM.warn, 120, 60, "#FFB020", 700); text("Claude - crowpanel-knob", 180, 27, "#7C8494", 500);
     text("git push origin main", 258, 34, "#F2F4F8"); text("‹  " + a.choice + "  ›", 352, 58, a.color, 700); text("tourner  -  clic : valider", 420, 26, "#7C8494", 500);
   },
-  done(t) { arc("#3DDC84", 1, true, 14); text("✓", 300, 160, "#3DDC84", 700); text("Accepté", 380, 40, "#F2F4F8"); },
-  hue(t) { arc("#FFB547", .75); text("⚡", 160, 60, "#FFB547"); text("Salon", 260, 40, "#F2F4F8"); text("75%", 340, 64, "#FFB547", 700); },
+  done(t) { arc("#3DDC84", 1, true, 14); text(SYM.ok, 300, 160, "#3DDC84", 700); text("Accepté", 380, 40, "#F2F4F8"); },
+  hue(t) { arc("#FFB547", .75); text("HUE", 170, 30, "#7C8494"); text("Salon", 260, 40, "#F2F4F8"); text("75%", 340, 64, "#FFB547", 700); },
   net(t) { arc("#22D3EE", .82, false, 18); text("RESEAU", 150, 28, "#7C8494"); text("↓ 54,2 Mo/s", 260, 52, "#22D3EE", 700); text("↑ 3,1 Mo/s", 330, 40, "#F472B6", 700); },
   sys(t) { text("SYSTEME", 100, 28, "#7C8494");
     [["CPU", "23%", "#22D3EE", .23, 180, 210], ["GPU", "61%", "#76B900", .61, 332, 210], ["RAM", "48%", "#A78BFA", .48, 180, 362], ["TEMP", "64", "#3DDC84", .55, 332, 362]].forEach(([k, v, c, lv, x, y]) => {
@@ -197,7 +200,7 @@ const SCREENS = {
       g.strokeStyle = c; g.beginPath(); g.arc(x, y, 62, .75 * Math.PI, .75 * Math.PI + 1.5 * Math.PI * lv); g.stroke();
       g.fillStyle = "#F2F4F8"; g.font = "700 34px 'Chakra Petch'"; g.textAlign = "center"; g.fillText(v, x, y + 8); g.fillStyle = "#7C8494"; g.font = "500 22px 'Chakra Petch'"; g.fillText(k, x, y + 40); }); },
   clock(t) { arc("#22D3EE", ((t * 6) % 60) / 60, true, 8); text("14:32", 250, 110, "#F2F4F8", 700); text("vendredi 10 octobre", 300, 28, "#7C8494", 500); text("19 - Pluie", 360, 36, "#F2F4F8"); },
-  alert(t) { g.strokeStyle = "#3DDC84"; g.lineWidth = 14; g.beginPath(); g.arc(C, C, C - 14, 0, Math.PI * 2); g.stroke(); text("✓", 220, 110, "#3DDC84", 700); text("Impression terminee", 300, 38, "#F2F4F8"); text("H2D", 350, 30, "#7C8494", 500); },
+  alert(t) { g.strokeStyle = "#3DDC84"; g.lineWidth = 14; g.beginPath(); g.arc(C, C, C - 14, 0, Math.PI * 2); g.stroke(); text(SYM.ok, 220, 110, "#3DDC84", 700); text("Impression terminee", 300, 38, "#F2F4F8"); text("H2D", 350, 30, "#7C8494", 500); },
 };
 
 // ---------- Outils de chorégraphie ----------
@@ -211,7 +214,7 @@ function show(id, o, dy = 0, extra = "") {
 }
 const APPS = [
   { key: "chrome.exe", name: "Google Chrome", color: "#EE2020", value: "▲  ▼", hint: "clic : onglet suivant", level: .18 },
-  { key: "spotify.exe", name: "Spotify", color: "#23FF71", value: "▶", hint: "clic : lecture / pause", level: .55 },
+  { key: "spotify.exe", name: "Spotify", color: "#23FF71", value: SYM.play, hint: "clic : lecture / pause", level: .55 },
   { key: "discord.exe", name: "Discord", color: "#5965FF", value: "70%", hint: "clic : couper le micro", level: .7 },
   { key: "bambu-studio.exe", name: "Bambu Studio", color: "#00FF60", value: "63%", hint: "clic : trancher", level: .63 },
   { key: "telegram.exe", name: "Telegram", color: "#23B5FF", value: "▲  ▼", hint: "conversations", level: .18 },

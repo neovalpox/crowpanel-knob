@@ -623,7 +623,7 @@ function showSettings() {
   document.querySelector(".c-click .k").textContent = "Mode nuit";
   document.querySelector(".c-long .k").textContent = "Absence";
   setAccent("#7DF9FF");
-  window.knob3d?.setScreen({ name: "Réglages", value: "", hint: "triple clic", color: "#7DF9FF", level: 1, icon: null, glyph: "⚙" });
+  window.knob3d?.setScreen({ name: "Réglages", value: "", hint: "triple clic", color: "#7DF9FF", level: 1, icon: null, glyph: String.fromCharCode(0x2699) });
   syncOutputs(); renderList();
 }
 function syncOutputs() { $("o-nbl").textContent = $("s-nbl").value; $("o-nleds").textContent = $("s-nleds").value + " %"; }
@@ -714,7 +714,7 @@ function updatePreview(fresh = false) {
   }
   lastBindings = b;
   setAccent(color);
-  const value = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", none: "", app: "▲  ▼" }[knob] ?? "42%";
+  const value = { scroll: "▲  ▼", keys: "▲  ▼", media: String.fromCharCode(0x25B6), none: "", app: "▲  ▼" }[knob] ?? "42%";
   window.knob3d?.setScreen({ name: p.name || app.name, value, hint: p.click ? "clic : " + labelOf(p.click).toLowerCase() : "",
                              color, level: ["scroll", "keys", "app", "none"].includes(knob) ? 0.16 : 0.42, icon: app.icon });
 }

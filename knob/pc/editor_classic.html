@@ -350,7 +350,7 @@ function updatePreview() {
   $("picon").style.visibility = app.icon ? "visible" : "hidden";
   $("pname").textContent = p.name || app.name;
   const knob = $("f-knob").value;
-  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: "▶", master: "42%", appvol: "42%", auto: "42%",
+  $("pval").textContent = { scroll: "▲  ▼", keys: "▲  ▼", media: String.fromCharCode(0x25B6), master: "42%", appvol: "42%", auto: "42%",
                            local: "42%", app: "▲  ▼", none: "" }[knob] ?? "";
   $("pval").style.color = color;
   $("phint").textContent = p.click ? "clic : " + labelOf(p.click) : "";
