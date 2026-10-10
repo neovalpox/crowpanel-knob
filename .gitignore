@@ -21,3 +21,9 @@ knob/pc/hue.json
 mount_pixel/ref/
 knob/pc/launcher.json
 knob/pc/settings.json
+
+# Trailer : fichiers de rendu intermédiaires (régénérables)
+knob/trailer/frames/
+knob/trailer/preview_*.png
+knob/trailer/contact.png
+knob/trailer/music.wav

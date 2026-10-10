@@ -1,0 +1,18 @@
+# Compagnon PC du CrowPanel Knob (Windows 10/11, Python 3.12+)
+# python -m venv .venv && .venv\Scripts\python -m pip install -r requirements.txt
+comtypes==1.4.17
+icoextract==0.3.0
+numpy==2.5.3
+paho-mqtt==2.1.0
+pillow==12.3.0
+psutil==7.2.2
+PyAudioWPatch==0.2.12.8
+pycaw==20260927
+pyserial==3.5
+pystray==0.19.5
+pywin32==312
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Media.Control==3.2.1
+winrt-Windows.Storage.Streams==3.2.1

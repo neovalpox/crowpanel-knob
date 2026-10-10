@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>CrowPanel Knob — trailer</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Barlow:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  /* Rendu image par image : window.renderAt(t) fixe tout l'état à l'instant t (secondes). */
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+  #stage { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 46%, transparent 42%, rgba(2, 3, 12, .85) 100%); }
+  .layer { position: absolute; inset: 0; pointer-events: none; color: #E9F1FF; font-family: "Chakra Petch", sans-serif; }
+  .t { position: absolute; opacity: 0; will-change: opacity, transform; }
+  .title { left: 0; right: 0; top: 420px; text-align: center; font-weight: 700; font-size: 150px; letter-spacing: .01em;
+    text-shadow: 0 0 40px rgba(125, 249, 255, .55); }
+  .tagline { left: 0; right: 0; top: 610px; text-align: center; font: 600 46px "Chakra Petch"; color: #9fb3dd; }
+  .caption { left: 120px; bottom: 120px; max-width: 900px; font-weight: 700; font-size: 72px; line-height: 1.04;
+    text-shadow: 0 0 30px rgba(0, 0, 0, .8); }
+  .caption small { display: block; margin-top: 18px; font: 600 34px "Barlow"; color: #b9c7e8; letter-spacing: .01em; }
+  .word { left: 0; right: 0; top: 860px; text-align: center; font-weight: 700; font-size: 92px; }
+  .product { left: 120px; top: 230px; width: 760px; }
+  .product .k { font: 600 36px "Barlow"; color: #9fb3dd; }
+  .product .name { font-weight: 700; font-size: 84px; line-height: 1.02; margin: 14px 0 26px; }
+  .product .spec { font: 600 36px "Barlow"; color: #d6e2ff; line-height: 1.5; }
+  .product .plus { margin-top: 34px; font: 600 34px "Barlow"; color: #7DF9FF; }
+  .end { left: 0; right: 0; top: 380px; text-align: center; }
+  .end .made { font-weight: 700; font-size: 96px; }
+  .end .repo { margin-top: 30px; font: 600 44px "Chakra Petch"; color: #7DF9FF; }
+  .end .sub { margin-top: 18px; font: 600 34px "Barlow"; color: #9fb3dd; }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; mix-blend-mode: screen; }
+  .bars { position: absolute; left: 0; right: 0; height: 90px; background: #000; }
+  .bars.top { top: 0; } .bars.bottom { bottom: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080"></canvas>
+<div class="vignette"></div>
+<div class="layer">
+  <div class="bars top"></div><div class="bars bottom"></div>
+  <div class="t title" id="title">CrowPanel Knob</div>
+  <div class="t tagline" id="tagline">Une molette. Toutes tes apps.</div>
+  <div class="t caption" id="cap-reveal">Un écran rond.<br>Une molette crantée.<small>ESP32-S3 · écran tactile 240×240 · 5 LEDs RGB</small></div>
+  <div class="t caption" id="cap-apps">Il devine ce que<br>tu fais.<small>L'écran et la molette s'adaptent à l'app au premier plan.</small></div>
+  <div class="t caption" id="cap-spotify">Le son<br>se voit.<small>Mode dédié Spotify : pochette, spectre en direct, pistes à la molette.</small></div>
+  <div class="t caption" id="cap-bambu">Ton imprimante 3D,<br>en direct.<small>Progression, temps restant, caméra — Bambu Lab en réseau local.</small></div>
+  <div class="t caption" id="cap-claude">Claude demande.<br>Tu tournes. Tu cliques.<small>Les permissions de Claude Code, validées à la molette.</small></div>
+  <div class="t word" id="word"></div>
+  <div class="t product" id="product">
+    <div class="k">Ce qu'il te faut</div>
+    <div class="name">Elecrow CrowPanel 1.28" ESP32-S3 Rotary Display</div>
+    <div class="spec">Écran IPS rond tactile 240×240<br>Molette crantée + appui · 5 LEDs RGB · USB-C</div>
+    <div class="plus">+ un PC Windows · support 3D imprimable en option</div>
+  </div>
+  <div class="t end" id="end">
+    <div class="made">Développé avec Claude</div>
+    <div class="repo">github.com/neovalpox/crowpanel-knob</div>
+    <div class="sub">Open source · firmware, compagnon PC et supports 3D</div>
+  </div>
+  <div class="flash" id="flash"></div>
+</div>
+
+<script type="module">
+import * as THREE from "/pc/static/three.module.min.js";
+
+const W = 1920, H = 1080, BEAT = 0.5;   // 120 BPM : un temps = 0,5 s, une mesure = 2 s
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById("stage"), antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H, false); renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene(); scene.background = new THREE.Color("#060a1c"); scene.fog = new THREE.Fog("#060a1c", 9, 24);
+const camera = new THREE.PerspectiveCamera(30, W / H, 0.1, 100);
+
+// Environnement pour les reflets du métal.
+const pmrem = new THREE.PMREMGenerator(renderer);
+{
+  const c = document.createElement("canvas"); c.width = 16; c.height = 256;
+  const g = c.getContext("2d"), grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, "#e4edff"); grad.addColorStop(.45, "#3a4f8f"); grad.addColorStop(.55, "#0b1230"); grad.addColorStop(1, "#05070f");
+  g.fillStyle = grad; g.fillRect(0, 0, 16, 256);
+  const env = new THREE.Scene();
+  env.add(new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), side: THREE.BackSide })));
+  const strip = new THREE.Mesh(new THREE.PlaneGeometry(8, .6), new THREE.MeshBasicMaterial({ color: 0xffffff })); strip.position.set(0, 4, -6); env.add(strip);
+  scene.environment = pmrem.fromScene(env, .02).texture;
+}
+
+// ---------- Le module (même modèle que l'éditeur) ----------
+const tilt = new THREE.Group(), knob = new THREE.Group(); tilt.add(knob); scene.add(tilt);
+const base = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.02, .52, 96),
+  new THREE.MeshPhysicalMaterial({ color: "#d9e2f2", roughness: .55, clearcoat: .6, transparent: true, opacity: .93 }));
+base.position.y = -.46; knob.add(base);
+const ledGlow = new THREE.Mesh(new THREE.TorusGeometry(1, .035, 12, 120), new THREE.MeshBasicMaterial({ color: "#7DF9FF", transparent: true }));
+ledGlow.rotation.x = Math.PI / 2; ledGlow.position.y = -.22; knob.add(ledGlow);
+const leds = [];
+for (let i = 0; i < 5; i++) {
+  const a = i / 5 * Math.PI * 2 + Math.PI / 2;
+  const l = new THREE.Mesh(new THREE.SphereGeometry(.06, 16, 12), new THREE.MeshBasicMaterial({ color: "#7DF9FF" }));
+  l.position.set(Math.cos(a), -.36, Math.sin(a)); knob.add(l); leds.push(l);
+}
+const knurlCanvas = document.createElement("canvas"); knurlCanvas.width = 512; knurlCanvas.height = 32;
+{ const g = knurlCanvas.getContext("2d");
+  for (let x = 0; x < 512; x += 8) { const gr = g.createLinearGradient(x, 0, x + 8, 0);
+    gr.addColorStop(0, "#202020"); gr.addColorStop(.5, "#f0f0f0"); gr.addColorStop(1, "#202020"); g.fillStyle = gr; g.fillRect(x, 0, 8, 32); } }
+const knurl = new THREE.CanvasTexture(knurlCanvas); knurl.wrapS = THREE.RepeatWrapping; knurl.repeat.set(3, 1);
+const ring = new THREE.Mesh(new THREE.CylinderGeometry(1.02, 1.02, .62, 160, 1, true),
+  new THREE.MeshStandardMaterial({ color: "#b9c2d0", metalness: 1, roughness: .32, bumpMap: knurl, bumpScale: 2.2, roughnessMap: knurl, side: THREE.DoubleSide }));
+ring.position.y = .12; knob.add(ring);
+const lip = new THREE.Mesh(new THREE.TorusGeometry(.96, .07, 20, 160), new THREE.MeshStandardMaterial({ color: "#c9d1de", metalness: 1, roughness: .25 }));
+lip.rotation.x = Math.PI / 2; lip.position.y = .43; knob.add(lip);
+const glassTop = new THREE.Mesh(new THREE.CylinderGeometry(.93, .93, .04, 96), new THREE.MeshPhysicalMaterial({ color: "#05070f", roughness: .05, clearcoat: 1 }));
+glassTop.position.y = .42; knob.add(glassTop);
+const screenCanvas = document.createElement("canvas"); screenCanvas.width = screenCanvas.height = 512;
+const screenTex = new THREE.CanvasTexture(screenCanvas); screenTex.colorSpace = THREE.SRGBColorSpace;
+const screen = new THREE.Mesh(new THREE.CircleGeometry(.86, 96), new THREE.MeshBasicMaterial({ map: screenTex, toneMapped: false }));
+screen.rotation.x = -Math.PI / 2; screen.position.y = .445; knob.add(screen);
+
+// Sol, halo, aura, poussière
+const grid = new THREE.GridHelper(48, 48, "#203070", "#141f4a"); grid.position.y = -2.1; scene.add(grid);
+const haloTex = (() => { const c = document.createElement("canvas"); c.width = c.height = 256; const g = c.getContext("2d");
+  const r = g.createRadialGradient(128, 128, 0, 128, 128, 128); r.addColorStop(0, "rgba(255,255,255,.9)"); r.addColorStop(.35, "rgba(255,255,255,.25)"); r.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = r; g.fillRect(0, 0, 256, 256); return new THREE.CanvasTexture(c); })();
+const halo = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: .6, blending: THREE.AdditiveBlending, depthWrite: false }));
+halo.rotation.x = -Math.PI / 2; halo.position.y = -2.08; scene.add(halo);
+const aura = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 7.5), new THREE.MeshBasicMaterial({ map: haloTex, transparent: true, opacity: .35, blending: THREE.AdditiveBlending, depthWrite: false }));
+aura.position.set(0, .35, -2.4); scene.add(aura);
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+const DUST = 420, dustBase = Array.from({ length: DUST }, () => [(rnd() - .5) * 20, rnd() * 9 - 2.5, (rnd() - .5) * 12 - 1, rnd()]);
+const dustGeo = new THREE.BufferGeometry(); dustGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(DUST * 3), 3));
+const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ size: .04, transparent: true, opacity: .6, blending: THREE.AdditiveBlending, depthWrite: false }));
+scene.add(dust);
+scene.add(new THREE.HemisphereLight("#9fb8ff", "#060a1c", .6));
+const key = new THREE.DirectionalLight("#ffffff", 1.6); key.position.set(-4, 6, 5); scene.add(key);
+const rim = new THREE.DirectionalLight("#7DF9FF", 1.3); rim.position.set(5, 2, -6); scene.add(rim);
+const accentLight = new THREE.PointLight("#7DF9FF", 20, 8, 2); accentLight.position.set(0, -1.2, 1.4); scene.add(accentLight);
+
+// ---------- Icônes réelles des apps ----------
+const icons = await (await fetch("icons.json")).json();
+const iconImg = {};
+await Promise.all(Object.entries(icons).map(([k, v]) => new Promise(res => { const im = new Image(); im.onload = res; im.src = v.icon; iconImg[k] = im; })));
+await document.fonts.ready;
+
+// ---------- Musique (même partition que music.py) : pour synchroniser le spectre ----------
+const kickEnv = t => { if (t < 4 || (t >= 38 && t < 42) || t >= 45) return 0; const p = (t % BEAT) / BEAT; return Math.exp(-p * 7); };
+const hatEnv = t => { if (t < 4 || (t >= 38 && t < 42) || t >= 45) return 0; const s = t >= 16 ? .125 : .25; return Math.exp(-((t % s) / s) * 9); };
+const arpEnv = t => t < 2 ? 0 : Math.exp(-((t % .125) / .125) * 4) * (t >= 38 && t < 42 ? .6 : 1);
+
+// ---------- Dessin de l'écran ----------
+const g = screenCanvas.getContext("2d"), S = 512, C = S / 2;
+function screenBase() { g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, S, S); g.save(); g.beginPath(); g.arc(C, C, C, 0, Math.PI * 2); g.clip(); g.fillStyle = "#000"; g.fillRect(0, 0, S, S); }
+function arc(color, level, full = false, width = 26) {
+  const st = full ? -Math.PI / 2 : 135 * Math.PI / 180, sp = (full ? 360 : 270) * Math.PI / 180;
+  g.lineCap = "round"; g.lineWidth = width; g.strokeStyle = "#1A1D24"; g.beginPath(); g.arc(C, C, C - 30, st, st + sp); g.stroke();
+  if (level <= 0) return;
+  g.strokeStyle = color; g.shadowColor = color; g.shadowBlur = 26; g.beginPath(); g.arc(C, C, C - 30, st, st + sp * Math.min(1, level)); g.stroke(); g.shadowBlur = 0;
+}
+function text(str, y, size, color, weight = 600) { g.fillStyle = color; g.font = `${weight} ${size}px 'Chakra Petch'`; g.textAlign = "center"; g.textBaseline = "alphabetic"; g.fillText(str, C, y); }
+function iconOrMono(key, name, color, y = 170, size = 140) {
+  const glow = g.createRadialGradient(C, y, 0, C, y, 115); glow.addColorStop(0, color + "66"); glow.addColorStop(1, color + "00");
+  g.fillStyle = glow; g.beginPath(); g.arc(C, y, 115, 0, Math.PI * 2); g.fill();
+  const im = iconImg[key];
+  if (im) g.drawImage(im, C - size / 2, y - size / 2, size, size);
+  else { g.fillStyle = color; g.beginPath(); g.arc(C, y, 62, 0, Math.PI * 2); g.fill(); text(name[0], y + 22, 64, "#04122a", 700); }
+}
+const SCREENS = {
+  volume(t) { arc("#22D3EE", .42 + .03 * Math.sin(t * 2)); text("VOLUME", 170, 30, "#7C8494"); text("42", 300, 120, "#F2F4F8", 700); text("Arctis Nova Pro", 380, 28, "#7C8494"); },
+  app(t, a) { arc(a.color, a.level); iconOrMono(a.key, a.name, a.color); text(a.name, 300, 40, "#F2F4F8"); text(a.value, 366, 52, a.color); text(a.hint, 420, 27, "#7C8494", 500); },
+  spotify(t) {
+    // Pochette générée + spectre en segments synchronisé sur la musique.
+    const cy = 230, cover = g.createLinearGradient(C - 70, cy - 70, C + 70, cy + 70);
+    cover.addColorStop(0, "#ff4fd8"); cover.addColorStop(.5, "#7b2ff7"); cover.addColorStop(1, "#22d3ee");
+    for (let i = 0; i < 48; i++) {
+      const band = i < 24 ? i : 47 - i, ang = (-90 + (i + .5) * 7.5) * Math.PI / 180;
+      const lvl = Math.min(1, (band < 4 ? kickEnv(t) : band < 14 ? arpEnv(t) * (.5 + .5 * Math.sin(band + t * 6)) : hatEnv(t) * .8) * (.75 + .25 * Math.sin(band * 1.7 + t * 3)));
+      const segs = 1 + Math.round(lvl * 7);
+      for (let s = 0; s < segs; s++) {
+        const r = 92 + 2 + s * 12, x = C + r * Math.cos(ang), y = cy + r * Math.sin(ang);
+        g.fillStyle = s > 4 ? "#ffffff" : s > 2 ? "#b9ffd2" : "#1ED760"; g.fillRect(x - 4, y - 4, 8, 8);
+      }
+    }
+    g.save(); g.beginPath(); g.arc(C, cy, 74, 0, Math.PI * 2); g.clip(); g.fillStyle = cover; g.fillRect(C - 80, cy - 80, 160, 160);
+    g.fillStyle = "rgba(0,0,0,.35)"; g.beginPath(); g.arc(C, cy, 16, 0, Math.PI * 2); g.fill(); g.restore();
+    text("Neon Drive", 404, 40, "#F2F4F8"); text("Synthwave Lab", 446, 28, "#B8BFCC", 500);
+    g.fillStyle = "#1A1D24"; g.fillRect(C - 64, 468, 128, 8); g.fillStyle = "#1ED760"; g.fillRect(C - 64, 468, 128 * ((t - 16) / 6 * .5 + .2), 8);
+  },
+  bambu(t) { const p = .40 + (t - 22) / 6 * .23; arc("#3DDC84", p); iconOrMono("bambu-studio.exe", "B", "#3DDC84", 168, 120);
+    text("H2D", 290, 40, "#F2F4F8"); text(Math.round(p * 100) + "%", 360, 60, "#3DDC84", 700); text("1h12 - couche 87/214", 418, 27, "#7C8494", 500); },
+  ask(t, a) {
+    g.strokeStyle = a.color; g.lineWidth = 12; g.shadowColor = a.color; g.shadowBlur = 24; g.beginPath(); g.arc(C, C, C - 14, 0, Math.PI * 2); g.stroke(); g.shadowBlur = 0;
+    text("⚠", 120, 60, "#FFB020", 700); text("Claude - crowpanel-knob", 180, 27, "#7C8494", 500);
+    text("git push origin main", 258, 34, "#F2F4F8"); text("‹  " + a.choice + "  ›", 352, 58, a.color, 700); text("tourner  -  clic : valider", 420, 26, "#7C8494", 500);
+  },
+  done(t) { arc("#3DDC84", 1, true, 14); text("✓", 300, 160, "#3DDC84", 700); text("Accepté", 380, 40, "#F2F4F8"); },
+  hue(t) { arc("#FFB547", .75); text("⚡", 160, 60, "#FFB547"); text("Salon", 260, 40, "#F2F4F8"); text("75%", 340, 64, "#FFB547", 700); },
+  net(t) { arc("#22D3EE", .82, false, 18); text("RESEAU", 150, 28, "#7C8494"); text("↓ 54,2 Mo/s", 260, 52, "#22D3EE", 700); text("↑ 3,1 Mo/s", 330, 40, "#F472B6", 700); },
+  sys(t) { text("SYSTEME", 100, 28, "#7C8494");
+    [["CPU", "23%", "#22D3EE", .23, 180, 210], ["GPU", "61%", "#76B900", .61, 332, 210], ["RAM", "48%", "#A78BFA", .48, 180, 362], ["TEMP", "64", "#3DDC84", .55, 332, 362]].forEach(([k, v, c, lv, x, y]) => {
+      g.lineWidth = 12; g.strokeStyle = "#1A1D24"; g.beginPath(); g.arc(x, y, 62, .75 * Math.PI, 2.25 * Math.PI); g.stroke();
+      g.strokeStyle = c; g.beginPath(); g.arc(x, y, 62, .75 * Math.PI, .75 * Math.PI + 1.5 * Math.PI * lv); g.stroke();
+      g.fillStyle = "#F2F4F8"; g.font = "700 34px 'Chakra Petch'"; g.textAlign = "center"; g.fillText(v, x, y + 8); g.fillStyle = "#7C8494"; g.font = "500 22px 'Chakra Petch'"; g.fillText(k, x, y + 40); }); },
+  clock(t) { arc("#22D3EE", ((t * 6) % 60) / 60, true, 8); text("14:32", 250, 110, "#F2F4F8", 700); text("vendredi 10 octobre", 300, 28, "#7C8494", 500); text("19 - Pluie", 360, 36, "#F2F4F8"); },
+  alert(t) { g.strokeStyle = "#3DDC84"; g.lineWidth = 14; g.beginPath(); g.arc(C, C, C - 14, 0, Math.PI * 2); g.stroke(); text("✓", 220, 110, "#3DDC84", 700); text("Impression terminee", 300, 38, "#F2F4F8"); text("H2D", 350, 30, "#7C8494", 500); },
+};
+
+// ---------- Outils de chorégraphie ----------
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const ease = x => 1 - Math.pow(1 - clamp(x), 3);
+const smooth = x => { x = clamp(x); return x * x * (3 - 2 * x); };
+// Visibilité d'un élément entre a et b avec fondu entrant/sortant.
+const win = (t, a, b, fin = .35, fout = .35) => clamp(Math.min((t - a) / fin, (b - t) / fout));
+function show(id, o, dy = 0, extra = "") {
+  const el = document.getElementById(id); el.style.opacity = o; el.style.transform = `translateY(${(1 - o) * dy}px) ${extra}`;
+}
+const APPS = [
+  { key: "chrome.exe", name: "Google Chrome", color: "#EE2020", value: "▲  ▼", hint: "clic : onglet suivant", level: .18 },
+  { key: "spotify.exe", name: "Spotify", color: "#23FF71", value: "▶", hint: "clic : lecture / pause", level: .55 },
+  { key: "discord.exe", name: "Discord", color: "#5965FF", value: "70%", hint: "clic : couper le micro", level: .7 },
+  { key: "bambu-studio.exe", name: "Bambu Studio", color: "#00FF60", value: "63%", hint: "clic : trancher", level: .63 },
+  { key: "telegram.exe", name: "Telegram", color: "#23B5FF", value: "▲  ▼", hint: "conversations", level: .18 },
+  { key: "windowsterminal.exe", name: "Terminal", color: "#D97757", value: "⟳", hint: "Claude au travail", level: 1 },
+];
+const MONTAGE = [["hue", "Hue", "#FFB547"], ["net", "Réseau", "#22D3EE"], ["sys", "Système", "#76B900"], ["clock", "Tableau de bord", "#22D3EE"],
+                 ["alert", "Alertes", "#3DDC84"], ["volume", "Volume", "#22D3EE"], ["hue", "Lumières", "#FFB547"], ["net", "Débits", "#F472B6"]];
+const accent = new THREE.Color();
+
+window.renderAt = function (t) {
+  // --- caméra et module ---
+  // knobX : module à droite quand un texte occupe la gauche, au centre sinon.
+  let color = "#7DF9FF", rise = 1, yaw = .1, camR = 7, camY = 1.3, ledOn = 1, ringRot = 0, press = 0, knobX = 0;
+  if (t < 4) { rise = 0; ledOn = 0; }
+  else if (t < 10) { rise = ease((t - 4) / 2.2); yaw = -1.2 + 1.3 * ease((t - 4) / 5.5); camR = 9.6 - 1.8 * ease((t - 4) / 5);
+    ledOn = clamp((t - 5) / .6); knobX = 1.5 * smooth((t - 5.6) / 1.2); }
+  else if (t < 16) { const i = Math.floor(t - 10); color = APPS[i].color; yaw = .1 + .06 * Math.sin(t); camR = 7.8; knobX = 1.5;
+    ringRot = i * Math.PI / 3 + ease((t - 10) % 1 / .3) * Math.PI / 3; }
+  else if (t < 22) { color = "#1ED760"; yaw = -.25 + (t - 16) * .06; camR = 7.0; camY = 1.1; knobX = 1.35;
+    ringRot = Math.floor((t - 16) / 2) * Math.PI / 3; }
+  else if (t < 28) { color = "#3DDC84"; yaw = .35 - (t - 22) * .08; camR = 7.5; knobX = 1.45; }
+  else if (t < 34) { color = t < 32.5 ? "#FFB020" : "#3DDC84"; yaw = -.05; camR = 7.2 - (t - 28) * .05; knobX = 1.35;
+    ringRot = (t < 30 ? 0 : t < 31 ? 1 : t < 32 ? 2 : 1) * Math.PI / 4; press = (t > 32.4 && t < 32.8) ? 1 : 0; }
+  else if (t < 38) { const m = MONTAGE[Math.floor((t - 34) / BEAT)]; color = m[2]; yaw = Math.sin(t * 2.2) * .3; camR = 7.0;
+    ringRot = Math.floor((t - 34) / BEAT) * Math.PI / 4; }
+  else if (t < 42) { color = "#7DF9FF"; yaw = Math.sin((t - 38) * 1.2) * .45; camR = 7.8; camY = 1.0; knobX = 1.65; }
+  else { color = "#7DF9FF"; yaw = .1; camR = 12; rise = 1 - ease((t - 43.2) / 2); }
+  camera.position.set(0, camY, camR); camera.lookAt(0, .25, 0);
+  tilt.rotation.set(THREE.MathUtils.degToRad(63), yaw, 0);
+  tilt.position.set(knobX, -5 + (5.35 + .07 * Math.sin(t * 1.1)) * rise, 0);
+  aura.position.x = knobX;
+  ring.rotation.y = ringRot; knurl.offset.x = ringRot / (Math.PI * 2) * 3;
+  [ring, lip, glassTop, screen].forEach((m, i) => { m.position.y = [.12, .43, .42, .445][i] - press * .1; });
+  accent.set(color);
+  const beat = kickEnv(t);
+  [ledGlow.material, halo.material, aura.material, dust.material, ...leds.map(l => l.material)].forEach(m => m.color.copy(accent));
+  ledGlow.material.opacity = ledOn * (.55 + .45 * beat);
+  leds.forEach(l => l.visible = ledOn > .5);
+  halo.material.opacity = .25 + .45 * ledOn + .2 * beat; aura.material.opacity = (.18 + .2 * beat) * clamp(t - 3.5);
+  accentLight.color.copy(accent); accentLight.intensity = 10 + 22 * ledOn + 12 * beat;
+  rim.color.copy(accent).lerp(new THREE.Color("#7DF9FF"), .5);
+  grid.material.opacity = 1;
+  const pos = dustGeo.attributes.position;
+  dustBase.forEach(([x, y, z, s], i) => { pos.setXYZ(i, x + Math.sin(t * .3 + s * 6) * .3, ((y + 2.5 + t * (.15 + s * .1)) % 9) - 2.5, z); });
+  pos.needsUpdate = true;
+
+  // --- écran ---
+  screenBase();
+  if (t < 10) SCREENS.volume(t);
+  else if (t < 16) SCREENS.app(t, APPS[Math.floor(t - 10)]);
+  else if (t < 22) SCREENS.spotify(t);
+  else if (t < 28) SCREENS.bambu(t);
+  else if (t < 32.5) SCREENS.ask(t, t < 30 ? { choice: "OUI", color: "#3DDC84" } : t < 31 ? { choice: "TOUJOURS", color: "#22D3EE" } : t < 32 ? { choice: "NON", color: "#FF4D5E" } : { choice: "OUI", color: "#3DDC84" });
+  else if (t < 34) SCREENS.done(t);
+  else if (t < 38) SCREENS[MONTAGE[Math.floor((t - 34) / BEAT)][0]](t);
+  else SCREENS.app(t, { key: null, name: "CrowPanel", color: "#7DF9FF", value: "", hint: "", level: 1 });
+  g.restore(); screenTex.needsUpdate = true;
+
+  // --- textes ---
+  const glitch = t > 2.4 && t < 2.9 ? `translateX(${Math.round(Math.sin(t * 90) * 14)}px)` : "";
+  show("title", win(t, 2.4, 9.6, .15, .5) * (t < 4.6 ? 1 : clamp((5.2 - t) / .6)), 0, glitch);
+  document.getElementById("title").style.top = t < 4 ? "420px" : "120px";
+  show("tagline", win(t, 3.0, 5.0, .4, .5), 30);
+  show("cap-reveal", win(t, 6, 9.7), 40);
+  show("cap-apps", win(t, 10.3, 15.7), 40);
+  show("cap-spotify", win(t, 16.3, 21.7), 40);
+  show("cap-bambu", win(t, 22.3, 27.7), 40);
+  show("cap-claude", win(t, 28.3, 33.7), 40);
+  const w = document.getElementById("word");
+  if (t >= 34 && t < 38) { const m = MONTAGE[Math.floor((t - 34) / BEAT)]; w.textContent = m[1]; w.style.color = m[2]; show("word", 1 - ((t - 34) % BEAT) / BEAT * .5); }
+  else show("word", 0);
+  show("product", win(t, 38.2, 41.8, .4, .3), 40);
+  show("end", win(t, 42.2, 46, .5, .6), 30);
+  // flashs blancs sur les changements de section
+  const cuts = [4, 10, 16, 22, 28, 32.5, 34, 38, 42];
+  const f = Math.max(...cuts.map(c => t >= c ? Math.exp(-(t - c) * 9) : 0));
+  document.getElementById("flash").style.opacity = (f * .55).toFixed(3);
+  renderer.render(scene, camera);
+  return true;
+};
+window.trailerReady = true;
+window.renderAt(0);
+</script>
+</body>
+</html>
