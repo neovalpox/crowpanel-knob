@@ -15,7 +15,11 @@ DEFAULTS = {
     "night_leds": 25,           # LEDs la nuit, en % (0-100)
     "meeting_silent": True,     # alertes silencieuses (historique seulement) pendant une réunion
     "away_mute_min": 10,        # coupe le son après N minutes d'absence (0 = jamais), rétabli au retour
+    "link": "auto",             # liaison avec le module : auto (USB sinon Wi-Fi), usb, wifi
 }
+LINKS = ("auto", "usb", "wifi")
+# Valeurs internes, jamais renvoyées à l'éditeur : clé Wi-Fi partagée avec le module, dernière IP.
+PRIVATE = ("wifi_key", "wifi_ip")
 
 
 def load():
@@ -33,8 +37,21 @@ def save(values):
         if key in values:
             v = values[key]
             data[key] = type(default)(v) if not isinstance(default, bool) else bool(v)
+    if data["link"] not in LINKS:
+        data["link"] = "auto"
     PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return data
+
+
+def set_private(key, value):
+    data = load()
+    data[key] = value
+    PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
+def public(s):
+    return {k: v for k, v in s.items() if k not in PRIVATE}
 
 
 def home_message(s):

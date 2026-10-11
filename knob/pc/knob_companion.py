@@ -39,6 +39,7 @@ import bambu
 import camera
 import dashboard
 import hue
+import link
 import audio_out
 import launcher
 import media
@@ -85,6 +86,10 @@ VK = {
     ".": 0xBE, ",": 0xBC,  # touches OEM : ord() donnerait Suppr / autre chose
     "playpause": 0xB3, "next": 0xB0, "prev": 0xB1,
 }
+MIRROR_RE = re.compile(rb"^s(\d+) (\d+) (\d+) (\d+) (\d+)$")
+
+# Touches multimédia demandées par le module en Wi-Fi (usage HID -> touche virtuelle Windows).
+HID_TO_VK = {0xE9: 0xAF, 0xEA: 0xAE, 0xE2: 0xAD, 0xCD: 0xB3, 0xB5: 0xB0, 0xB6: 0xB1}
 
 
 def press_combo(combo):
@@ -93,6 +98,13 @@ def press_combo(combo):
         user32.keybd_event(k, 0, 0, 0)
     for k in reversed(keys):
         user32.keybd_event(k, 0, 2, 0)
+
+
+def press_media(usage):
+    vk = HID_TO_VK.get(usage)
+    if vk:
+        user32.keybd_event(vk, 0, 1, 0)  # touche étendue, comme le clavier multimédia USB
+        user32.keybd_event(vk, 0, 3, 0)
 
 
 def scroll(steps):
@@ -461,6 +473,19 @@ class Companion:
         self.pending_lock = None    # verrouillage demandé par l'API (traité dans la boucle)
         self.away_muted = False     # son coupé par nous pour absence (à rétablir au retour)
         self.write_lock = threading.Lock()
+        self.link_kind = None       # "usb" ou "wifi"
+        self.relink = False
+        self.next_wifi_try = 0
+        self.wifi_status = None     # dernier état Wi-Fi rapporté par le module
+        self.wifi_scan = []
+        self.wifi_scan_done = threading.Event()
+        self.pc_net = (0, None)
+        self.mirror = np.zeros((240, 240), np.uint16)  # écran du module (RGB565), tenu à jour par "s"
+        self.mirror_version = 0
+        self.mirror_png = (-1, b"")
+        self.mirror_wanted = 0      # dernière demande de l'éditeur (monotonic)
+        self.mirror_on = False     # (horodatage, SSID du PC) : netsh est lent, on le garde 30 s
+        self.last_wifi_poll = 0
         self.recent = {}           # apps vues au premier plan (éditeur de profils)
         self.editor_icon_misses = set()
         self.png_cache = {}        # icônes en PNG base64 pour l'éditeur
@@ -473,10 +498,19 @@ class Companion:
 
     # --- liaison série
     def connect(self):
+        mode = self.settings.get("link", "auto")
+        ser = (self.open_usb() if mode != "wifi" else None) or (self.open_wifi() if mode != "usb" else None)
+        if not ser:
+            return False
+        self.link_kind = "wifi" if isinstance(ser, link.NetLink) else "usb"
+        self.on_connected(ser)
+        return True
+
+    def open_usb(self):
         port = next((p.device for p in list_ports.comports()
                      if p.vid == VID_ESPRESSIF and p.pid == PID_KNOB), None)
         if not port:
-            return False
+            return None
         ser = serial.Serial()
         ser.port, ser.baudrate, ser.timeout, ser.write_timeout = port, 115200, 0, 2
         # DTR obligatoire : sans lui, le CDC TinyUSB du module refuse d'émettre
@@ -484,6 +518,31 @@ class Companion:
         # complète redémarre le module en mode flash.
         ser.dtr, ser.rts = True, False
         ser.open()
+        return ser
+
+    def open_wifi(self):
+        """Module en Wi-Fi : dernière IP connue, sinon découverte sur le réseau local."""
+        key = self.settings.get("wifi_key")
+        now = time.monotonic()
+        if not key or now < self.next_wifi_try:
+            return None
+        self.next_wifi_try = now + 5
+        for ip in dict.fromkeys(filter(None, [self.settings.get("wifi_ip"), "?"])):
+            if ip == "?":
+                ip = link.discover()
+                if not ip:
+                    return None
+            try:
+                net = link.NetLink(ip, key)
+            except (OSError, ConnectionError) as e:
+                log.debug("Wi-Fi %s : %s", ip, e)
+                continue
+            if ip != self.settings.get("wifi_ip"):
+                self.settings = settings.set_private("wifi_ip", ip)
+            return net
+        return None
+
+    def on_connected(self, ser):
         self.ser = ser
         self.last_master = None
         self.app_key = None
@@ -498,8 +557,10 @@ class Companion:
             self.ser = ser
             self.send("e1\n")
         self.rx = b""
-        log.info("connecté sur %s", port)
-        return True
+        self.wifi_status = None
+        self.last_wifi_poll = 0
+        self.mirror_on = False  # renvoyé par push_mirror_state si l'éditeur regarde
+        log.info("connecté (%s)", ser.port)
 
     def send(self, data):
         # Un seul écrivain à la fois : deux fils qui écrivent en même temps mélangeraient
@@ -934,13 +995,19 @@ class Companion:
         self.send_once("Q", settings.home_message(self.settings))
 
     def save_settings(self, values):
+        old_link = self.settings.get("link")
         self.settings = settings.save(values)
-        log.info("réglages enregistrés : %s", self.settings)
+        if self.settings["link"] != old_link:
+            self.relink = True  # la boucle principale coupe la liaison et se reconnecte selon le mode
+            self.next_wifi_try = 0
+        log.info("réglages enregistrés : %s", settings.public(self.settings))
 
     # --- mise à jour du firmware en un clic (icône de notification)
     def update_firmware(self):
         if self.updating:
             return
+        # Module en Wi-Fi seulement : envoi sans fil ; sinon flash par l'USB comme avant.
+        self.update_over = "wifi" if self.link_kind == "wifi" else "usb"
         self.updating = True
         threading.Thread(target=self._update_firmware, daemon=True, name="firmware").start()
 
@@ -952,11 +1019,18 @@ class Companion:
                 time.sleep(0.1)
             pio = Path.home() / ".platformio" / "penv" / "Scripts" / "pio.exe"
             fw = HERE.parent / "firmware"
-            log.info("mise à jour du firmware…")
+            wifi = self.update_over == "wifi"
+            log.info("mise à jour du firmware (%s)…", "Wi-Fi" if wifi else "USB")
             self.tray.notify("Mise a jour du firmware en cours...")
-            res = subprocess.run([str(pio), "run", "-t", "upload", "-d", str(fw)], capture_output=True,
-                                 text=True, timeout=600, creationflags=subprocess.CREATE_NO_WINDOW)
+            cmd = [str(pio), "run", "-d", str(fw)] + ([] if wifi else ["-t", "upload"])
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
             ok = res.returncode == 0
+            if ok and wifi:
+                err = link.push_firmware(self.settings.get("wifi_ip"), self.settings.get("wifi_key"),
+                                         fw / ".pio" / "build" / "knob" / "firmware.bin")
+                ok = err is None
+                res.stdout += f"\nenvoi Wi-Fi : {err}"
             log.info("mise à jour du firmware : %s", "réussie" if ok else "ÉCHEC\n" + res.stdout[-1500:])
             self.tray.notify("Firmware mis a jour" if ok else "Echec de la mise a jour (voir le journal)")
         except Exception:
@@ -964,6 +1038,106 @@ class Companion:
         finally:
             time.sleep(4)  # le temps que le module redémarre
             self.updating = False
+
+    # --- miroir de l'écran du module (éditeur 3D)
+    def on_mirror(self, x, y, w, h, data):
+        out, i, n = np.empty(w * h, np.uint16), 0, len(data)
+        k = 0
+        while i < n and k < w * h:
+            b = data[i]
+            if b >= 128:  # plage : (b - 127) fois le pixel suivant
+                run = b - 127
+                out[k:k + run] = data[i + 1] | data[i + 2] << 8
+                k += run
+                i += 3
+            else:         # b + 1 pixels bruts
+                cnt = b + 1
+                out[k:k + cnt] = np.frombuffer(data, "<u2", cnt, i + 1)
+                k += cnt
+                i += 1 + 2 * cnt
+        if k == w * h and x + w <= 240 and y + h <= 240:
+            self.mirror[y:y + h, x:x + w] = out.reshape(h, w)
+            self.mirror_version += 1
+
+    def mirror_frame(self, known):
+        """(version, PNG) de l'écran du module ; PNG vide si rien de neuf depuis `known`."""
+        self.mirror_wanted = time.monotonic()
+        v = self.mirror_version
+        if v == known or not self.mirror_on or v == 0:
+            return v, b""
+        if self.mirror_png[0] != v:
+            px = self.mirror.astype(np.uint32)
+            rgb = np.dstack([((px >> 11) & 31) * 255 // 31, ((px >> 5) & 63) * 255 // 63,
+                             (px & 31) * 255 // 31]).astype(np.uint8)
+            buf = io.BytesIO()
+            Image.fromarray(rgb, "RGB").save(buf, "PNG", compress_level=1)
+            self.mirror_png = (v, buf.getvalue())
+        return self.mirror_png
+
+    def push_mirror_state(self):
+        want = time.monotonic() - self.mirror_wanted < 3
+        if want != self.mirror_on:
+            self.mirror_on = want
+            if want:
+                self.mirror_version = 0  # le module renvoie tout l'écran
+            self.send("s1\n" if want else "s0\n")
+
+    # --- Wi-Fi : configuration par l'USB, puis liaison sans fil
+    def on_wifi_message(self, msg):
+        if msg.startswith("wi"):
+            f = (msg[2:].split("\t") + ["", "", "", ""])[:4]
+            state = int(f[0] or 0)
+            self.wifi_status = {"state": state, "ssid": f[1], "ip": f[2], "rssi": int(f[3] or 0)}
+            if state == 2 and f[2] and f[2] != self.settings.get("wifi_ip"):
+                self.settings = settings.set_private("wifi_ip", f[2])
+        elif msg.startswith("ws"):
+            rssi, _, name = msg[2:].partition("\t")
+            self.wifi_scan.append({"ssid": name, "rssi": int(rssi or 0)})
+        elif msg == "w.":
+            self.wifi_scan_done.set()
+
+    def wifi_state(self):
+        if time.monotonic() - self.pc_net[0] > 30:
+            self.pc_net = (time.monotonic(), link.pc_network()[0])
+        return {"link": self.link_kind, "port": self.ser.port if self.ser else None, "pc_ssid": self.pc_net[1],
+                "status": self.wifi_status, "configured": bool(self.settings.get("wifi_key")),
+                "mode": self.settings.get("link", "auto")}
+
+    def wifi_scan_networks(self):
+        if self.link_kind is None:
+            return {"error": "Module non connecté"}
+        self.wifi_scan = []
+        self.wifi_scan_done.clear()
+        self.send("w?\n")
+        if not self.wifi_scan_done.wait(15):
+            return {"error": "Pas de réponse du module"}
+        return {"networks": sorted(self.wifi_scan, key=lambda n: -n["rssi"])}
+
+    def wifi_configure(self, ssid, password, use_pc=False):
+        if self.link_kind != "usb":
+            return {"error": "Branche le module en USB pour configurer le Wi-Fi"}
+        if use_pc:
+            ssid, profile = link.pc_network()
+            password = link.pc_network_key(profile) if profile else None
+            if not ssid or password is None:
+                return {"error": "Réseau de ce PC introuvable : saisis-le à la main"}
+        if not ssid or any(c in ssid + password for c in "\t\r\n") \
+                or len(ssid.encode()) > 32 or len(password.encode()) > 63:
+            return {"error": "Nom ou mot de passe invalide"}
+        key = self.settings.get("wifi_key") or link.new_key()
+        self.settings = settings.set_private("wifi_key", key)
+        self.wifi_status = None
+        self.send(f"w={ssid}\t{password}\t{key}\n")
+        log.info("Wi-Fi configuré sur le module (%s)", ssid)
+        return {"ok": True}
+
+    def wifi_forget(self):
+        if self.link_kind != "usb":
+            return {"error": "Branche le module en USB pour oublier le Wi-Fi"}
+        self.send("w-\n")
+        self.settings = settings.set_private("wifi_key", "")
+        log.info("Wi-Fi oublié")
+        return {"ok": True}
 
     # --- alertes (affichées par-dessus n'importe quelle app)
     def notify(self, symbol, title, subtitle, color):
@@ -1067,7 +1241,8 @@ class Companion:
         elif self.app_key:
             current = self.app_key[1].lower()
         return {"defaults": defaults, "overrides": overrides, "apps": apps, "options": {"actions": actions},
-                "settings": self.settings, "tiles": settings.TILES,
+                "settings": settings.public(self.settings), "tiles": settings.TILES,
+                "wifi": self.wifi_state(),
                 "current": current, "connected": self.ser is not None,
                 "port": self.ser.port if self.ser else None}
 
@@ -1206,11 +1381,28 @@ class Companion:
             return
         self.rx += self.ser.read(n)
         while b"\n" in self.rx:
-            raw, self.rx = self.rx.split(b"\n", 1)
+            head, rest = self.rx.split(b"\n", 1)
+            m = MIRROR_RE.match(head)
+            if m:  # zone de l'écran du module (miroir pour l'éditeur 3D), suivie de données binaires
+                size = int(m.group(5))
+                if len(rest) < size:
+                    break  # la suite n'est pas encore arrivée
+                self.on_mirror(*map(int, m.groups()[:4]), rest[:size])
+                self.rx = rest[size:]
+                continue
+            raw, self.rx = head, rest
             msg = raw.decode(errors="ignore").strip()
             if not msg:
                 continue
             log.debug("module : %s", msg)
+            if msg == "p":  # battement de cœur en Wi-Fi
+                continue
+            if msg[0] == "k":  # touche multimédia (en Wi-Fi, pas d'USB HID vers ce PC)
+                press_media(int(msg[1:] or "0", 16))
+                continue
+            if msg[0] == "w":
+                self.on_wifi_message(msg)
+                continue
             if msg[0] == "x":
                 rid, idx = msg[1:].split()
                 if int(rid) >= AUDIO_ASK_BASE:
@@ -1306,7 +1498,11 @@ class Companion:
             self.guarded(self.push_tile_config)
             self.guarded(self.push_meeting)
             self.guarded(self.check_away_mute)
+        if now - self.last_wifi_poll > 3:
+            self.last_wifi_poll = now
+            self.guarded(lambda: self.send("w!\n"))
         self.guarded(self.push_camera)
+        self.guarded(self.push_mirror_state)
         if self.pending_lock is not None:  # demandé par l'API locale
             want, self.pending_lock = self.pending_lock, None
             if want and not self.locked:
@@ -1341,10 +1537,15 @@ class Companion:
         while True:
             try:
                 self.tray.set_connected(self.ser is not None)
+                if self.relink and self.ser:
+                    log.info("changement de liaison : %s", self.settings["link"])
+                    self.ser.close()
+                    self.ser = self.link_kind = None
+                self.relink = False
                 if self.updating:  # mise à jour du firmware : on libère le port
                     if self.ser:
                         self.ser.close()
-                        self.ser = None
+                        self.ser = self.link_kind = None
                     time.sleep(0.5)
                     continue
                 if self.ser is None and not self.connect():
@@ -1358,7 +1559,7 @@ class Companion:
                     self.ser and self.ser.close()
                 except Exception:
                     pass
-                self.ser = None
+                self.ser = self.link_kind = None
                 time.sleep(1)
             except comtypes.COMError as e:
                 log.info("erreur audio (%s)", e)

@@ -14,6 +14,8 @@ void uiBegin();
 void uiTick();  // LEDs, horloge, veille, alertes, retour auto sur la tuile application
 
 void uiSetSynced(bool synced);
+void uiSetLinkSymbol(const char *symbol);  // symbole affiché sans PC : USB ou Wi-Fi
+void uiFirmwareProgress(int percent);     // écran de mise à jour sans fil (-1 = fermer)
 void uiSetMaster(int volume, bool muted);
 // icon peut être nullptr : on garde l'icône précédente.
 void uiSetApp(const char *name, AppMode mode, uint32_t rgb, const char *hint, const lv_img_dsc_t *icon);

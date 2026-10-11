@@ -30,20 +30,36 @@
 //                  "m<0|1|2>\t<app>"                    réunion : aucune / micro ouvert / coupé
 //                  "B<‰ desc.>\t<débit desc.>\t<‰ mont.>\t<débit mont.>"  tuile réseau
 //                  "X<id>\t<titre>\t<détail>\t<LIB,rrggbb|...>"  question à choix ; "x<id>" la ferme
+//                  "w=<ssid>\t<mot de passe>\t<clé hex>" / "w-"   Wi-Fi : configurer / oublier (USB seulement)
+//                  "w?" (scan) ; "w!" (état)
+//                  "!<taille>\t<md5>" + octets         nouveau firmware (mise à jour sans fil)
 //   module -> PC : "H" (bonjour), "Q<tuile>", "R<crans>", "C" (clic), "L" (appui long),
 //                  "x<id> <index>" (réponse, -1 = rendre la main au terminal), "o<i>" (raccourci lancé),
-//                  "T" (triple clic : ouvrir l'éditeur)
+//                  "T" (triple clic : ouvrir l'éditeur), "k<usage hex>" (touche multimédia à appuyer
+//                  par le PC, en Wi-Fi), "wi<état>	<ssid>	<ip>	<rssi>", "ws<rssi>	<ssid>", "w." (fin du scan),
+//                  "!ok" / "!err <raison>" (mise à jour)
+// La même liaison passe par l'USB (CDC) ou par le Wi-Fi (TCP, voir net.h).
 #include <Arduino.h>
 #include "USBHIDConsumerControl.h"
+#include <Update.h>
 #include "hw.h"
+#include "net.h"
 #include "ui.h"
 
 #define SYNC_TIMEOUT_MS 5000
 #define ICON_MAX (96 * 96 * 3)
 #define CAM_SIZE 160
 
-static char line[256];
-static int lineLen = 0;
+// Une ligne en cours de réception par liaison ; les réponses partent sur la dernière
+// liaison qui a parlé (le compagnon utilise l'USB ou le Wi-Fi, pas les deux).
+struct LineBuf {
+  char text[256];
+  int len;
+};
+static LineBuf usbLine, netLine;
+static Stream *out = &usbSerial;  // liaison des réponses
+static Stream *rxSrc = &usbSerial;  // liaison de la commande en cours
+static bool outNet = false, rxNet = false;
 static unsigned long lastRx = 0;
 static bool synced = false;
 
@@ -68,21 +84,40 @@ static int iconBack = 0;
 static bool iconPending = false;
 
 // Image caméra : un seul tampon, la réception bloque la boucle LVGL donc pas de déchirure.
-static uint8_t camData[CAM_SIZE * CAM_SIZE * 2];
+#define CAM_BYTES (CAM_SIZE * CAM_SIZE * 2)
+static uint8_t *camData;  // en PSRAM : la RAM interne reste au Wi-Fi
 static lv_img_dsc_t camDsc;
 
 // Icônes du lanceur radial
 #define RAD_MAX 8
 #define RAD_ICON 32
-static uint8_t radIconData[RAD_MAX][RAD_ICON * RAD_ICON * 3];
+#define RAD_BYTES (RAD_ICON * RAD_ICON * 3)
+static uint8_t *radIconData[RAD_MAX];
+
+static uint8_t *bigAlloc(size_t n) {
+  void *p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  return (uint8_t *)(p ? p : malloc(n));
+}
+
+static void allocBuffers() {
+  camData = bigAlloc(CAM_BYTES);
+  for (int i = 0; i < RAD_MAX; i++) radIconData[i] = bigAlloc(RAD_BYTES);
+}
 static lv_img_dsc_t radIconDsc[RAD_MAX];
 
-static bool readExact(uint8_t *dst, int len) {
+// Lit len octets sur la liaison qui a envoyé la commande en cours (USB ou Wi-Fi).
+static bool readExact(uint8_t *dst, int len, unsigned long timeoutMs = 1000) {
   int got = 0;
   unsigned long t0 = millis();
-  while (got < len && millis() - t0 < 1000) {
-    int n = usbSerial.read(dst + got, len - got);
-    if (n > 0) got += n; else delay(1);
+  while (got < len && millis() - t0 < timeoutMs) {
+    int avail = rxSrc->available();
+    int n = avail > 0 ? rxSrc->readBytes(dst + got, min(avail, len - got)) : 0;
+    if (n > 0) {
+      got += n;
+      t0 = millis();
+    } else {
+      delay(1);
+    }
   }
   return got == len;
 }
@@ -102,7 +137,7 @@ static void receiveIcon(int w, int h, int len) {
 }
 
 static void receiveLauncherIcon(int idx, int w, int h, int len) {
-  if (idx < 0 || idx >= RAD_MAX || w != RAD_ICON || h != RAD_ICON || len != (int)sizeof radIconData[0]) return;
+  if (idx < 0 || idx >= RAD_MAX || w != RAD_ICON || h != RAD_ICON || len != RAD_BYTES) return;
   if (!readExact(radIconData[idx], len)) return;
   lv_img_dsc_t &d = radIconDsc[idx];
   memset(&d, 0, sizeof d);
@@ -115,7 +150,7 @@ static void receiveLauncherIcon(int idx, int w, int h, int len) {
 }
 
 static void receiveCamera(int w, int h, int len) {
-  if (w != CAM_SIZE || h != CAM_SIZE || len != (int)sizeof camData) return;
+  if (w != CAM_SIZE || h != CAM_SIZE || len != CAM_BYTES) return;
   if (!readExact(camData, len)) return;
   memset(&camDsc, 0, sizeof camDsc);
   camDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
@@ -136,6 +171,9 @@ static int splitFields(char *s, char **fields, int max) {
   }
   return n;
 }
+
+static void receiveFirmware(int size, const char *md5);
+static bool mirrorOn = false;  // l'éditeur 3D du PC affiche l'écran réel ("s1" / "s0")
 
 static void handleLine(char *s) {
   int v, m, w, h, len;
@@ -285,33 +323,184 @@ static void handleLine(char *s) {
     case 'Y':
       if (splitFields(s + 1, f, 5) == 5) uiSetHue(f[0], atoi(f[1]), f[2], strtoul(f[3], nullptr, 16), f[4]);
       break;
+    case 'w':
+      // Wi-Fi : identifiants modifiables seulement depuis l'USB (pas par le réseau lui-même).
+      if (s[1] == '?') {
+        netScan(*out);
+      } else if (s[1] == '=' && !rxNet) {
+        // Redémarrage après enregistrement : le Wi-Fi repart proprement (un changement à chaud
+        // laissait la liaison décrocher toutes les 20 à 40 s).
+        if (splitFields(s + 2, f, 3) == 3 && netConfigure(f[0], f[1], f[2])) {
+          out->print("wi1\t\t\t0\n");
+          out->flush();
+          delay(200);
+          ESP.restart();
+        }
+        netStatus(*out);
+      } else if (s[1] == '-' && !rxNet) {
+        netForget();
+        uiSetLinkSymbol(LV_SYMBOL_USB);
+        netStatus(*out);
+      } else if (s[1] == '!') {
+        netStatus(*out);
+      }
+      break;
+    case '!':
+      if (splitFields(s + 1, f, 2) == 2) receiveFirmware(atoi(f[0]), f[1]);
+      break;
+    case 's':
+      hwMirrorEnable(s[1] == '1');
+      mirrorOn = s[1] == '1';
+      break;
+  }
+}
+
+// Bonjour au compagnon : tuile affichée + diagnostic (tas, PSRAM, cause du dernier redémarrage).
+static void sendHello() {
+  out->printf("H\nQ%d\nM%u psram=%u reset=%d uptime=%lus\n", (int)uiTile(), (unsigned)ESP.getFreeHeap(),
+              (unsigned)ESP.getFreePsram(), (int)esp_reset_reason(), millis() / 1000);
+}
+
+static void pollStream(Stream *s, LineBuf &b, bool net) {
+  while (s->available()) {
+    char c = s->read();
+    lastRx = millis();
+    if (c == '\n') {
+      b.text[b.len] = 0;
+      b.len = 0;
+      rxSrc = s;
+      rxNet = net;
+      out = s;
+      outNet = net;
+      handleLine(b.text);
+    } else if (b.len < (int)sizeof(b.text) - 1) {
+      b.text[b.len++] = c;
+    }
   }
 }
 
 static void pollLink() {
-  while (usbSerial.available()) {
-    char c = usbSerial.read();
+  pollStream(&usbSerial, usbLine, false);
+  netLoop();
+  static uint32_t gen = 0;
+  WiFiClient *nc = netClient();
+  if (nc && netGeneration() != gen) {
+    // Nouveau compagnon en Wi-Fi : il devient la liaison des réponses.
+    gen = netGeneration();
+    netLine.len = 0;
+    out = nc;
+    outNet = true;
     lastRx = millis();
-    if (c == '\n') {
-      line[lineLen] = 0;
-      handleLine(line);
-      lineLen = 0;
-    } else if (lineLen < (int)sizeof(line) - 1) {
-      line[lineLen++] = c;
-    }
+    sendHello();
+  }
+  static unsigned long lastBeat = 0;
+  if (nc && millis() - lastBeat > 2000) {  // le PC détecte ainsi un module débranché
+    lastBeat = millis();
+    nc->print("p\n");
+  }
+  if (nc) pollStream(nc, netLine, true);
+  else if (outNet) {  // client Wi-Fi perdu : retour sur l'USB
+    out = rxSrc = &usbSerial;
+    outNet = rxNet = false;
   }
   bool nowSynced = millis() - lastRx < SYNC_TIMEOUT_MS && lastRx != 0;
   if (nowSynced != synced) {
     synced = nowSynced;
     uiSetSynced(synced);
-    if (synced) usbSerial.printf("H\nQ%d\nM%u\n", (int)uiTile(), (unsigned)ESP.getFreeHeap());
+    if (synced) sendHello();
   }
+}
+
+// Miroir de l'écran : envoie la zone modifiée, compressée par plages, au plus ~8 fois par seconde
+// en USB, ~5 en Wi-Fi. Format : "s<x> <y> <w> <h> <octets>" puis les données ; chaque bloc
+// commence par un octet n : n >= 128 -> (n - 127) fois le pixel qui suit, sinon n + 1 pixels bruts.
+static void sendMirror() {
+  static unsigned long last = 0;
+  static uint8_t *pack = nullptr;  // pire cas : tout en pixels bruts + un octet par bloc de 128
+  if (!mirrorOn || !synced || !hwMirror || hwMirrorX1 > hwMirrorX2) return;
+  if (!pack && !(pack = bigAlloc(240 * 240 * 2 + 240 * 240 / 128 + 16))) return;
+  if (millis() - last < (outNet ? 200UL : 120UL)) return;
+  last = millis();
+  int x1 = hwMirrorX1, y1 = hwMirrorY1, x2 = hwMirrorX2, y2 = hwMirrorY2;
+  hwMirrorX1 = 1;
+  hwMirrorX2 = 0;
+  int w = x2 - x1 + 1, h = y2 - y1 + 1, n = w * h, len = 0, i = 0;
+  auto px = [&](int k) { return hwMirror[(y1 + k / w) * 240 + x1 + k % w]; };
+  while (i < n) {
+    uint16_t c = px(i);
+    int run = 1;
+    while (i + run < n && run < 128 && px(i + run) == c) run++;
+    if (run >= 3) {
+      pack[len++] = 127 + run;
+      pack[len++] = c & 0xFF;
+      pack[len++] = c >> 8;
+      i += run;
+      continue;
+    }
+    // Pixels bruts jusqu'à la prochaine plage d'au moins 3 pixels identiques.
+    int start = i, lit = 0;
+    while (i < n && lit < 128) {
+      uint16_t v = px(i);
+      if (i + 2 < n && px(i + 1) == v && px(i + 2) == v) break;
+      i++;
+      lit++;
+    }
+    pack[len++] = lit - 1;
+    for (int k = start; k < start + lit; k++) {
+      uint16_t v = px(k);
+      pack[len++] = v & 0xFF;
+      pack[len++] = v >> 8;
+    }
+  }
+  out->printf("s%d %d %d %d %d\n", x1, y1, w, h, len);
+  out->write(pack, len);
+}
+
+// Touches multimédia : en Wi-Fi, c'est le PC qui les appuie (pas d'USB HID vers lui).
+static bool mediaKeyOverNet(uint16_t usage) {
+  if (!outNet || !synced) return false;
+  out->printf("k%X\n", usage);
+  return true;
+}
+
+// Nouveau firmware envoyé par le PC (en Wi-Fi) : écrit dans l'autre partition puis redémarre.
+static void receiveFirmware(int size, const char *md5) {
+  if (size <= 0 || !Update.begin(size)) {
+    out->printf("!err %s\n", Update.errorString());
+    return;
+  }
+  if (strlen(md5) == 32) Update.setMD5(md5);
+  static uint8_t chunk[4096];
+  int done = 0, shown = -1;
+  while (done < size) {
+    int n = min((int)sizeof chunk, size - done);
+    if (!readExact(chunk, n, 30000) || Update.write(chunk, n) != (size_t)n) break;
+    done += n;
+    int pct = (long long)done * 100 / size;
+    if (pct != shown) {
+      shown = pct;
+      uiFirmwareProgress(pct);
+      lv_timer_handler();
+    }
+  }
+  if (done == size && Update.end()) {
+    out->print("!ok\n");
+    uiFirmwareProgress(100);
+    lv_timer_handler();
+    delay(500);
+    ESP.restart();
+  }
+  Update.abort();
+  out->printf("!err %s a %d/%d\n", done == size ? Update.errorString() : "reception", done, size);
+  uiFirmwareProgress(-1);
+  // Le reste du binaire arriverait comme des commandes : on coupe, le PC se reconnectera.
+  if (rxNet) netDrop();
 }
 
 // Triple clic : le PC ouvre l'éditeur de profils dans le navigateur.
 static void openEditor() {
   if (!synced) return;
-  usbSerial.print("T\n");
+  out->print("T\n");
   uiFlash(LV_SYMBOL_SETTINGS);
 }
 
@@ -322,7 +511,7 @@ static void handleKnob() {
     if (steps) uiLauncherRotate(steps);
     ButtonEvent b = hwPollButton();
     if (b == BTN_CLICK || b == BTN_DOUBLE || b == BTN_TRIPLE) {
-      usbSerial.printf("o%d\n", uiLauncherIndex());
+      out->printf("o%d\n", uiLauncherIndex());
       uiLauncherClose();
       uiFlash(LV_SYMBOL_OK);
     } else if (b == BTN_LONG) {
@@ -347,7 +536,7 @@ static void handleKnob() {
     }
     ButtonEvent b = hwPollButton();
     if (b != BTN_NONE) {
-      usbSerial.printf("x%d %d\n", uiAskId(), b == BTN_LONG ? -1 : uiAskIndex());
+      out->printf("x%d %d\n", uiAskId(), b == BTN_LONG ? -1 : uiAskIndex());
       uiAskClose();
     }
     return;
@@ -356,7 +545,7 @@ static void handleKnob() {
   if (uiMediaLocked()) {
     if (steps) {
       uiWake();
-      usbSerial.printf("R%d\n", steps);
+      out->printf("R%d\n", steps);
     }
     ButtonEvent b = hwPollButton();
     if (b == BTN_TRIPLE) {
@@ -364,7 +553,7 @@ static void handleKnob() {
     } else if (b != BTN_NONE && b != BTN_LONG && uiNotifyVisible()) {
       uiNotifyDismiss();
     } else if (b != BTN_NONE) {
-      usbSerial.print(b == BTN_LONG ? "L\n" : "C\n");  // double clic = un seul play/pause
+      out->print(b == BTN_LONG ? "L\n" : "C\n");  // double clic = un seul play/pause
     }
     return;
   }
@@ -377,7 +566,7 @@ static void handleKnob() {
         for (int i = 0; i < abs(steps); i++)
           hwSendMediaKey(steps > 0 ? CONSUMER_CONTROL_VOLUME_INCREMENT : CONSUMER_CONTROL_VOLUME_DECREMENT);
     } else {
-      usbSerial.printf("R%d\n", steps);  // le PC sait sur quelle tuile on est (Q)
+      out->printf("R%d\n", steps);  // le PC sait sur quelle tuile on est (Q)
     }
   }
 
@@ -399,7 +588,7 @@ static void handleKnob() {
   uint8_t what = b == BTN_CLICK ? LOCAL_CLICK : LOCAL_LONG;
   for (int i = 0; i < repeat; i++) {
     if (!isLocal(t, what)) {
-      usbSerial.print(b == BTN_CLICK ? "C\n" : "L\n");
+      out->print(b == BTN_CLICK ? "C\n" : "L\n");
     } else if (b == BTN_CLICK && (t == TILE_VOL || !synced)) {
       hwSendMediaKey(CONSUMER_CONTROL_MUTE);
     } else if (b == BTN_CLICK && t == TILE_DASH && i == 0) {
@@ -410,8 +599,12 @@ static void handleKnob() {
 
 void setup() {
   hwBegin();
+  allocBuffers();
   uiBegin();
   uiSetSynced(false);
+  hwMediaKeyHook = mediaKeyOverNet;
+  netBegin();
+  if (netConfigured()) uiSetLinkSymbol(LV_SYMBOL_WIFI);
 }
 
 // Diagnostic : toutes les 2 s, pire temps de rendu LVGL, mémoire LVGL libre et tas libre.
@@ -423,7 +616,7 @@ static void reportPerf(unsigned long renderMs) {
   lv_mem_monitor_t mon;
   lv_mem_monitor(&mon);
   if (synced && (uiMediaLocked() || worst > 80))
-    usbSerial.printf("M%u lv=%u frag=%u%% rendu_max=%lums boucles=%lu refr=%u px_max=%u refr_ms_max=%u anims=%u\n",
+    out->printf("M%u lv=%u frag=%u%% rendu_max=%lums boucles=%lu refr=%u px_max=%u refr_ms_max=%u anims=%u\n",
                      (unsigned)ESP.getFreeHeap(), (unsigned)mon.free_size, (unsigned)mon.frag_pct, worst, frames,
                      (unsigned)hwRefrCount, (unsigned)hwRefrPx, (unsigned)hwRefrMs,
                      (unsigned)lv_anim_count_running());
@@ -440,5 +633,6 @@ void loop() {
   unsigned long t0 = millis();
   lv_timer_handler();
   reportPerf(millis() - t0);
+  sendMirror();
   delay(2);
 }

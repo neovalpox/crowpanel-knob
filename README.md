@@ -58,6 +58,12 @@ respirent dans cette couleur — et la molette fait ce qu'il faut selon l'app :
 - **Système** — CPU, GPU NVIDIA, RAM, température GPU.
 - **Hue** — luminosité et couleur réelle de chaque pièce.
 
+### USB ou Wi-Fi
+Branché sur le PC, le module passe par l'USB. Configure une fois le Wi-Fi depuis l'éditeur (un clic :
+« Utiliser le réseau de ce PC ») et il suffit ensuite de l'alimenter, sur un chargeur ou une multiprise USB :
+le compagnon le retrouve sur le réseau local, tout passe par le Wi-Fi, mises à jour du firmware comprises.
+La liaison est authentifiée (clé partagée échangée par l'USB) ; le module ne parle qu'au compagnon qui l'a configuré.
+
 ### Widgets et automatismes
 - **Mode dédié média** : pochette ronde, spectre audio de 48 barres en direct (capture du son du PC), titre défilant, LEDs qui battent sur les basses.
 - **Bambu Lab** : progression, temps restant, couches, caméra en direct dans l'anneau, alertes de fin / pause / échec.
@@ -69,9 +75,11 @@ respirent dans cette couleur — et la molette fait ce qu'il faut selon l'app :
 
 ### L'éditeur 3D
 Triple clic sur la molette (ou double-clic sur l'icône de la barre des tâches) : une console holographique
-s'ouvre dans le navigateur, avec le module en 3D dont l'écran affiche le rendu réel de chaque profil.
+s'ouvre dans le navigateur, avec le module en 3D. Son écran affiche, au choix, **l'écran réel du module
+en direct** (le module envoie une copie de ce qu'il affiche, par l'USB ou le Wi-Fi) ou l'aperçu du profil
+en cours de modification.
 
-![Éditeur 3D](docs/screens/editor-v4-spotify.png)
+![Éditeur 3D, écran réel du module](knob/docs/screens/editor-live.png)
 
 ### Les supports imprimables
 | Keychron K10 Max — coin droit, module à 70° | Keychron K10 Max — coin gauche, Pixel 10 Pro Fold déplié |
@@ -89,7 +97,8 @@ Avec [PlatformIO](https://platformio.org/) :
 cd knob/firmware
 pio run -t upload        # adapter upload_port dans platformio.ini (port COM du module)
 ```
-Les mises à jour suivantes se font en un clic depuis l'éditeur ou l'icône de la barre des tâches.
+Les mises à jour suivantes se font en un clic depuis l'éditeur ou l'icône de la barre des tâches,
+par l'USB ou sans fil si le module est en Wi-Fi.
 
 ### 2. Compagnon PC
 ```powershell
@@ -112,20 +121,28 @@ Le hook de permission vérifie d'abord que le compagnon répond ; sinon le dialo
 ### 4. Réglages
 Tout se règle dans l'éditeur : **http://127.0.0.1:47615/** (local uniquement).
 
+### 5. Wi-Fi (optionnel)
+Module branché en USB : éditeur, **Réglages**, section **Connexion**, puis « Utiliser le réseau de ce PC »
+(ou choisir un réseau et saisir le mot de passe). Le module n'utilise que le **2,4 GHz**. Le mode de liaison
+(automatique, USB seul, Wi-Fi seul) se choisit au même endroit. Ports utilisés sur le réseau local :
+TCP 47616 (liaison) et UDP 47617 (découverte).
+
 ---
 
 ## Architecture
 
 ```
 knob/firmware/   ESP32-S3, Arduino + LVGL 8.3 — écran GC9A01, tactile CST816D, molette sur interruptions,
-                 USB composite (clavier multimédia HID + série) avec un PID dédié
+                 USB composite (clavier multimédia HID + série) avec un PID dédié, liaison Wi-Fi TCP
+                 authentifiée (HMAC-SHA256) et mise à jour du firmware sans fil
 knob/pc/         Compagnon Windows (Python) — fenêtre active, icônes, profils, widgets (média GSMTC,
                  Bambu MQTT local, Hue, Outlook, météo), serveur local + éditeur 3D (Three.js)
 knob/trailer/    Le trailer : scène Three.js rendue image par image + musique générée par code
 mount/, mount_pixel/   Supports OpenSCAD paramétriques + STL prêts à imprimer
 ```
-Le module et le PC parlent un protocole texte simple sur le port série USB (documenté en tête de
-[`knob/firmware/src/main.cpp`](knob/firmware/src/main.cpp)). Sans PC, le module reste un bouton de volume USB autonome.
+Le module et le PC parlent un protocole texte simple, sur le port série USB ou en TCP par le Wi-Fi
+(documenté en tête de [`knob/firmware/src/main.cpp`](knob/firmware/src/main.cpp) et de
+[`knob/firmware/src/net.h`](knob/firmware/src/net.h)). Sans PC, le module reste un bouton de volume USB autonome.
 
 ---
 
@@ -135,7 +152,8 @@ Le module et le PC parlent un protocole texte simple sur le port série USB (doc
 (the only required purchase) into a context-aware macro pad for Windows: the round screen and the knob adapt
 to the foreground app (real app icon and colour, per-app knob/click/long-press actions), with tiles for volume,
 dashboard, network, system and Philips Hue, a Spotify "dedicated mode" with a live audio visualizer, Bambu Lab
-printer status and camera, alerts, meeting and night modes — and Claude Code permission prompts you can answer
+printer status and camera, alerts, meeting and night modes, USB or authenticated Wi-Fi link (with wireless
+firmware updates) — and Claude Code permission prompts you can answer
 with the knob. Configuration happens in a 3D browser editor. Printable mounts for a Keychron K10 Max are included.
 
 The UI and docs are in French. License: MIT.

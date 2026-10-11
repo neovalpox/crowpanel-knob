@@ -109,6 +109,12 @@
   .stagetitle h2 { margin: 0; font: 600 34px/1.1 var(--display); text-shadow: 0 0 24px color-mix(in srgb, var(--accent) 60%, transparent); }
   .stagetitle .sub { color: var(--mist); margin-top: 6px; font-size: 14px; }
   .hint3d { position: absolute; top: 2%; left: 0; right: 0; text-align: center; color: var(--mist); font-size: 13px; opacity: .7; }
+  .screenmode { position: absolute; top: calc(2% + 26px); left: 50%; transform: translateX(-50%); display: flex;
+    pointer-events: auto; border: 1px solid var(--edge); background: rgba(8, 12, 30, .6); backdrop-filter: blur(6px); }
+  .screenmode button { border: 0; background: transparent; color: var(--mist); padding: 7px 14px; font-size: 13px; clip-path: none; }
+  .screenmode button[aria-pressed="true"] { background: color-mix(in srgb, var(--ice) 18%, transparent); color: var(--ice); }
+  .screenmode .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--mist); margin-right: 7px; vertical-align: 1px; }
+  .screenmode .dot.on { background: #34d399; box-shadow: 0 0 8px #34d399; }
 
   /* ---------- Feuille de réglages ---------- */
   .sheet { display: flex; flex-direction: column; min-height: 0; }
@@ -134,6 +140,11 @@
   .inline { display: flex; align-items: center; gap: 10px; }
   .range-row { display: grid; grid-template-columns: 1fr 50px; gap: 10px; align-items: center; font: 500 14px var(--display); }
   .help { color: var(--mist); font-size: 13px; }
+  .linkstate { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--edge); font-size: 14px; }
+  .linkstate b { font: 600 14px var(--display); color: var(--ice); }
+  .linkstate .bad { color: var(--amber); }
+  .wifi-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
   code { font-family: var(--display); color: var(--ice); }
   .sheet-actions { display: flex; gap: 10px; padding: 14px 22px 18px; border-top: 1px solid var(--edge); flex-wrap: wrap; }
   button {
@@ -187,6 +198,10 @@
 
   <section class="stagehud" aria-live="polite">
     <div class="hint3d">Glisse pour faire pivoter le module</div>
+    <div class="screenmode" role="group" aria-label="Écran du module 3D">
+      <button type="button" id="mode-live" aria-pressed="true"><span class="dot" id="live-dot"></span>Écran réel</button>
+      <button type="button" id="mode-preview" aria-pressed="false">Aperçu du profil</button>
+    </div>
     <div class="callout c-turn"><div class="k">Tourner</div><div class="v" id="co-turn">—</div></div>
     <div class="callout c-click"><div class="k">Clic</div><div class="v" id="co-click">—</div></div>
     <div class="callout c-long"><div class="k">Appui long</div><div class="v" id="co-long">—</div></div>
@@ -226,6 +241,25 @@
   <section class="sheet glass chamfer hidden" id="settings">
     <div class="sheet-body">
       <p class="lead">Appliqués tout de suite au module.</p>
+      <h3>Connexion</h3>
+      <div class="linkstate" aria-live="polite"><b id="w-link">—</b><span id="w-module">—</span></div>
+      <label class="field"><span>Liaison avec le module</span><select id="s-link">
+        <option value="auto">Automatique : USB si branché sur ce PC, sinon Wi-Fi</option>
+        <option value="usb">USB uniquement</option>
+        <option value="wifi">Wi-Fi uniquement</option></select></label>
+      <button type="button" class="primary hidden" id="w-pc"></button>
+      <div class="row">
+        <label class="field"><span>Réseau Wi-Fi</span><input id="w-ssid" list="w-list" placeholder="Nom du réseau" maxlength="32" autocomplete="off"></label>
+        <label class="field"><span>Mot de passe</span><input id="w-pass" type="password" maxlength="63" autocomplete="new-password"></label>
+      </div>
+      <datalist id="w-list"></datalist>
+      <div class="wifi-actions">
+        <button type="button" id="w-scan">Chercher les réseaux</button>
+        <button type="button" id="w-send">Envoyer au module</button>
+        <button type="button" class="danger" id="w-forget">Oublier le Wi-Fi</button>
+      </div>
+      <div class="help" id="w-help">Le Wi-Fi se configure une fois, module branché en USB. Ensuite, une simple alimentation USB suffit :
+        le compagnon retrouve le module sur le réseau local.</div>
       <h3>Écran d'accueil</h3>
       <label class="field"><span>Tuile d'accueil</span><select id="s-home"></select></label>
       <div class="row">
@@ -493,11 +527,28 @@ function publishAnchor() {
   window.dispatchEvent(new Event("knob-anchor"));
 }
 
+// Écran réel : image envoyée par le module (miroir 240x240), dessinée telle quelle.
+let liveImage = null, lastScreen = null;
+function drawLive() {
+  const g = screenCanvas.getContext("2d"), S = 512;
+  g.clearRect(0, 0, S, S);
+  g.save(); g.beginPath(); g.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2); g.clip();
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high";
+  g.drawImage(liveImage, 0, 0, S, S);
+  g.restore();
+  screenTex.needsUpdate = true;
+}
+
 window.knob3d = {
   setAccent(hex) { accentTarget.set(hex); },
   setScreen(s) {
-    if (s.icon && !iconCache[s.icon]) { const im = new Image(); im.onload = () => drawScreen(s); im.src = s.icon; iconCache[s.icon] = im; }
-    drawScreen(s);
+    lastScreen = s;
+    if (s.icon && !iconCache[s.icon]) { const im = new Image(); im.onload = () => !liveImage && drawScreen(s); im.src = s.icon; iconCache[s.icon] = im; }
+    if (!liveImage) drawScreen(s);
+  },
+  setLive(img) {  // null : retour à l'aperçu dessiné
+    liveImage = img;
+    if (img) drawLive(); else if (lastScreen) drawScreen(lastScreen);
   },
   spin(dir = 1) { ringTarget += dir * Math.PI / 3; },       // la bague tourne d'un cran visible
   press(long = false) { pressTarget = long ? 1 : 0.6; },     // la bague s'enfonce
@@ -571,7 +622,7 @@ function renderList() {
                   ["Vues récemment", state.apps.filter(a => !a.hasProfile && !a.exe.startsWith("_"))]];
   const settingsItem = `<div class="app ${current === "__settings" ? "sel" : ""}" data-exe="__settings" tabindex="0" style="--c:#7DF9FF">
       <div class="mono" style="background:rgba(125,249,255,.14);color:#7DF9FF">&#9881;</div>
-      <div><div class="name">Réglages</div><div class="exe">Accueil, nuit, absence, réunion</div></div><span></span></div>`;
+      <div><div class="name">Réglages</div><div class="exe">Connexion, accueil, nuit, absence</div></div><span></span></div>`;
   $("list").innerHTML = settingsItem + groups.map(([label, apps]) => {
     apps = apps.filter(match);
     if (!apps.length) return "";
@@ -615,8 +666,9 @@ function showSettings() {
   $("s-home").value = s.home_tile; $("s-app").value = s.app_return_s; $("s-other").value = s.other_return_s;
   $("s-nstart").value = s.night_start; $("s-nend").value = s.night_end;
   $("s-nbl").value = s.night_backlight; $("s-nleds").value = s.night_leds; $("s-silent").checked = s.meeting_silent;
-  $("s-away").value = s.away_mute_min;
-  $("title").textContent = "Réglages"; $("exe").textContent = "Accueil, nuit, absence et réunion";
+  $("s-away").value = s.away_mute_min; $("s-link").value = s.link || "auto";
+  renderWifi(state.wifi);
+  $("title").textContent = "Réglages"; $("exe").textContent = "Connexion, accueil, nuit, absence et réunion";
   $("co-turn").textContent = TILE_LABELS[s.home_tile] || "—"; $("co-click").textContent = `${s.night_start} h → ${s.night_end} h`;
   $("co-long").textContent = s.away_mute_min ? `Son coupé après ${s.away_mute_min} min` : "Jamais coupé";
   document.querySelector(".c-turn .k").textContent = "Accueil";
@@ -631,10 +683,65 @@ async function saveSettings() {
   const body = { home_tile: $("s-home").value, app_return_s: +$("s-app").value, other_return_s: +$("s-other").value,
                  night_start: +$("s-nstart").value, night_end: +$("s-nend").value,
                  night_backlight: +$("s-nbl").value, night_leds: +$("s-nleds").value, meeting_silent: $("s-silent").checked,
-                 away_mute_min: +$("s-away").value };
+                 away_mute_min: +$("s-away").value, link: $("s-link").value };
   const res = await api("/api/settings", body);
   state.settings = res.settings; toast("Réglages enregistrés"); showSettings();
 }
+
+// ---- Connexion : USB ou Wi-Fi
+const WIFI_STATES = ["Wi-Fi du module : non configuré", "Wi-Fi du module : connexion en cours…",
+                     "Wi-Fi du module : connecté", "Wi-Fi du module : échec (réseau introuvable, 2,4 GHz uniquement, ou mot de passe refusé)"];
+function renderWifi(w) {
+  if (!w) return;
+  state.wifi = w;
+  $("w-link").textContent = w.link === "wifi" ? `Relié en Wi-Fi (${w.port.replace("Wi-Fi ", "")})`
+                          : w.link === "usb" ? `Relié en USB (${w.port})` : "Module non relié";
+  const st = w.status, el = $("w-module");
+  if (!st) { el.textContent = w.link ? "Wi-Fi du module : état inconnu (firmware à mettre à jour ?)" : ""; el.className = ""; }
+  else {
+    const signal = st.state === 2 ? ` à ${st.ssid}, ${st.ip}, signal ${st.rssi} dBm` : st.ssid ? ` (${st.ssid})` : "";
+    el.textContent = WIFI_STATES[st.state] + signal;
+    el.className = st.state === 3 ? "bad" : "";
+  }
+  const usb = w.link === "usb";
+  $("w-send").disabled = $("w-forget").disabled = $("w-pc").disabled = !usb;
+  $("w-pc").classList.toggle("hidden", !w.pc_ssid);
+  $("w-pc").textContent = `Utiliser le réseau de ce PC (${w.pc_ssid || ""})`;
+  $("w-scan").disabled = !w.link;
+  $("w-help").textContent = usb
+    ? "Le Wi-Fi se configure une fois, module branché en USB. Ensuite, une simple alimentation USB suffit : le compagnon retrouve le module sur le réseau local."
+    : "Pour changer de réseau, branche le module en USB sur ce PC.";
+}
+async function refreshWifi() {
+  if (current !== "__settings" || document.hidden) return;
+  try { renderWifi(await api("/api/wifi")); } catch {}
+}
+setInterval(refreshWifi, 2000);
+$("w-scan").onclick = async () => {
+  $("w-scan").disabled = true; $("w-scan").textContent = "Recherche…";
+  try {
+    const r = await api("/api/wifi/scan", {});
+    if (r.error) toast(r.error);
+    else {
+      $("w-list").innerHTML = r.networks.map(n => `<option value="${n.ssid.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;")}">${n.rssi} dBm</option>`).join("");
+      toast(`${r.networks.length} réseau${r.networks.length > 1 ? "x" : ""} trouvé${r.networks.length > 1 ? "s" : ""}`);
+      $("w-ssid").focus();
+    }
+  } finally { $("w-scan").textContent = "Chercher les réseaux"; renderWifi(state.wifi); }
+};
+$("w-send").onclick = async () => {
+  const r = await api("/api/wifi", { ssid: $("w-ssid").value.trim(), password: $("w-pass").value });
+  if (r.error) return toast(r.error);
+  $("w-pass").value = ""; toast("Wi-Fi envoyé au module, connexion en cours");
+};
+$("w-pc").onclick = async () => {
+  const r = await api("/api/wifi", { use_pc: true });
+  toast(r.error || "Wi-Fi du PC envoyé au module, connexion en cours");
+};
+$("w-forget").onclick = async () => {
+  const r = await api("/api/wifi/forget", {});
+  toast(r.error || "Wi-Fi oublié : le module ne se connecte plus au réseau");
+};
 
 function select(exe) {
   if (exe === "__settings") return showSettings();
@@ -758,11 +865,43 @@ async function reset() {
 async function load() {
   state = await api("/api/state");
   fillSelect($("f-widget"), Object.entries(WIDGETS));
-  $("status").textContent = state.connected ? `Module connecté sur ${state.port}` : "Module non connecté";
+  $("status").textContent = state.connected ? `Module connecté (${state.port})` : "Module non connecté";
   $("status-wrap").classList.toggle("on", !!state.connected);
   renderList();
   select(state.current && state.apps.some(a => a.exe === state.current) ? state.current : "_tile_volume");
 }
+
+// ---- Écran réel : le module envoie son écran, on l'affiche sur le modèle 3D
+let liveMode = true, liveVersion = -1, liveShown = false;
+try { liveMode = localStorage.getItem("knob-screen") !== "preview"; } catch {}
+function setLiveMode(on) {
+  liveMode = on;
+  try { localStorage.setItem("knob-screen", on ? "live" : "preview"); } catch {}
+  $("mode-live").setAttribute("aria-pressed", on); $("mode-preview").setAttribute("aria-pressed", !on);
+  if (!on) { liveShown = false; liveVersion = -1; window.knob3d?.setLive(null); $("live-dot").classList.remove("on"); }
+}
+async function pollScreen() {
+  let delay = 1000;
+  if (liveMode && !document.hidden && window.knob3d?.setLive) {
+    delay = 150;
+    try {
+      const r = await fetch(`/api/screen?v=${liveVersion}`, { cache: "no-store" });
+      if (r.status === 200) {
+        liveVersion = +r.headers.get("X-Version");
+        const bmp = await createImageBitmap(await r.blob());
+        if (liveMode) { window.knob3d.setLive(bmp); liveShown = true; $("live-dot").classList.add("on"); }
+      }
+    } catch {
+      if (liveShown) { liveShown = false; window.knob3d.setLive(null); $("live-dot").classList.remove("on"); }
+      delay = 2000;
+    }
+  }
+  setTimeout(pollScreen, delay);
+}
+$("mode-live").onclick = () => setLiveMode(true);
+$("mode-preview").onclick = () => setLiveMode(false);
+setLiveMode(liveMode);
+pollScreen();
 
 $("q").oninput = renderList;
 $("form").onsubmit = save;
@@ -771,7 +910,10 @@ $("form").oninput = () => updatePreview();
 for (const p of ["click", "long"])
   $(`f-${p}`).addEventListener("change", () => $(`f-${p}-key`).classList.toggle("hidden", $(`f-${p}`).value !== "key:"));
 $("s-save").onclick = saveSettings;
-$("s-fw").onclick = async () => { await api("/api/firmware", {}); toast("Mise à jour du firmware lancée (environ 30 s)"); };
+$("s-fw").onclick = async () => {
+  await api("/api/firmware", {});
+  toast(state.wifi?.link === "wifi" ? "Mise à jour sans fil lancée (environ 1 min)" : "Mise à jour du firmware lancée (environ 30 s)");
+};
 $("s-nbl").oninput = syncOutputs; $("s-nleds").oninput = syncOutputs;
 // La scène 3D se charge en module (après ce script) : on redessine l'écran quand elle est prête.
 addEventListener("knob3d-ready", () => { if (current === "__settings") showSettings(); else if (current) updatePreview(true); });

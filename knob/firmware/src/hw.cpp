@@ -113,12 +113,38 @@ static void lvTouchRead(lv_indev_drv_t *, lv_indev_data_t *data) {
 }
 
 // ---------- Écran
+uint16_t *hwMirror = nullptr;
+static bool mirrorOn = false;
+int16_t hwMirrorX1 = 1, hwMirrorY1 = 1, hwMirrorX2 = 0, hwMirrorY2 = 0;
+
+void hwMirrorEnable(bool on) {
+  if (on && !hwMirror) {
+    hwMirror = (uint16_t *)heap_caps_malloc(240 * 240 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!hwMirror) return;
+  }
+  if (on && !mirrorOn) lv_obj_invalidate(lv_scr_act());  // tout redessiner : le miroir se remplit
+  mirrorOn = on && hwMirror;
+}
+
 static void lvFlush(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *px) {
-  gfx->draw16bitRGBBitmap(a->x1, a->y1, (uint16_t *)px, a->x2 - a->x1 + 1, a->y2 - a->y1 + 1);
+  int w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+  gfx->draw16bitRGBBitmap(a->x1, a->y1, (uint16_t *)px, w, h);
+  if (mirrorOn) {
+    for (int y = 0; y < h; y++) memcpy(hwMirror + (a->y1 + y) * 240 + a->x1, (uint16_t *)px + y * w, w * 2);
+    if (hwMirrorX1 > hwMirrorX2) {
+      hwMirrorX1 = a->x1; hwMirrorY1 = a->y1; hwMirrorX2 = a->x2; hwMirrorY2 = a->y2;
+    } else {
+      hwMirrorX1 = min<int16_t>(hwMirrorX1, a->x1); hwMirrorY1 = min<int16_t>(hwMirrorY1, a->y1);
+      hwMirrorX2 = max<int16_t>(hwMirrorX2, a->x2); hwMirrorY2 = max<int16_t>(hwMirrorY2, a->y2);
+    }
+  }
   lv_disp_flush_ready(drv);
 }
 
+bool (*hwMediaKeyHook)(uint16_t usage) = nullptr;
+
 void hwSendMediaKey(uint16_t usage) {
+  if (hwMediaKeyHook && hwMediaKeyHook(usage)) return;
   consumer.press(usage);
   delay(6);
   consumer.release();

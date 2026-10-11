@@ -795,6 +795,46 @@ void uiSetSynced(bool s) {
     lv_obj_clear_flag(usbIcon, LV_OBJ_FLAG_HIDDEN);
 }
 
+void uiSetLinkSymbol(const char *symbol) {
+  lv_label_set_text(usbIcon, symbol);
+  lv_label_set_text(haloSymbol, symbol);
+}
+
+// Mise à jour sans fil : anneau de progression plein écran, par-dessus tout.
+static lv_obj_t *otaPanel, *otaArc, *otaLabel;
+
+void uiFirmwareProgress(int percent) {
+  if (percent < 0) {
+    if (otaPanel) lv_obj_add_flag(otaPanel, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (!otaPanel) {
+    otaPanel = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(otaPanel);
+    lv_obj_set_size(otaPanel, 240, 240);
+    lv_obj_set_style_bg_color(otaPanel, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_opa(otaPanel, LV_OPA_COVER, 0);
+    otaArc = lv_arc_create(otaPanel);
+    lv_obj_set_size(otaArc, 200, 200);
+    lv_obj_center(otaArc);
+    lv_arc_set_rotation(otaArc, 270);
+    lv_arc_set_bg_angles(otaArc, 0, 360);
+    lv_arc_set_range(otaArc, 0, 100);
+    lv_obj_remove_style(otaArc, NULL, LV_PART_KNOB);
+    lv_obj_clear_flag(otaArc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_arc_width(otaArc, 10, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(otaArc, 10, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(otaArc, lv_color_hex(0x1A1D24), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(otaArc, lv_color_hex(0x22D3EE), LV_PART_INDICATOR);
+    otaLabel = makeLabel(otaPanel, &lv_font_montserrat_28, COL_TEXT, 0);
+    lv_obj_t *title = makeLabel(otaPanel, &lv_font_montserrat_14, COL_MUTE, 34);
+    lv_label_set_text(title, LV_SYMBOL_WIFI " Mise a jour");
+  }
+  lv_obj_clear_flag(otaPanel, LV_OBJ_FLAG_HIDDEN);
+  lv_arc_set_value(otaArc, percent);
+  lv_label_set_text_fmt(otaLabel, "%d %%", percent);
+}
+
 void uiSetMaster(int volume, bool muted) {
   if (volume == masterVolume && muted == masterMuted) return;
   masterVolume = constrain(volume, 0, 100);
