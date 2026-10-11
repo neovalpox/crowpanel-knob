@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include "hw.h"
 
+void (*uiSendHook)(const char *line) = nullptr;
+
 #define COL_BG 0x000000
 #define COL_TRACK 0x1A1D24
 #define COL_TEXT 0xF2F4F8
@@ -116,7 +118,10 @@ static bool histOpen = false;
 static lv_obj_t *histPanel, *histSym, *histTitle, *histSub, *histWhen, *histCounter, *dashUnread;
 
 // Badge réunion (micro utilisé par une app)
-static lv_obj_t *meetBadge, *meetDot, *meetLabel;
+static lv_obj_t *meetBadge;  // image transparente en haut de l'écran : texte courbe de réunion
+#define ARC_BAND_H 100       // hauteur de cette bande (ouverture du texte jusqu'à ~126°)
+static uint8_t *meetBuf;     // ses pixels : RGB565 petit-boutiste + alpha, 3 octets par pixel
+static char meetText[64];
 static int meetState = 0;
 static uint8_t sleepBacklight = BACKLIGHT_MAX;
 static bool sleepLeds = true, sleepClock = false;
@@ -300,10 +305,13 @@ static void refreshVolume() {
   if (appMode == MODE_MASTER) refreshApp();
 }
 
+static void meetFollowTile();
+
 static void onTileChanged(lv_event_t *) {
   refreshDots();
   ledFlash = 255;
-  usbSerial.printf("Q%d\n", (int)uiTile());
+  meetFollowTile();
+  // La tuile affichée est signalée au PC par la boucle principale (USB ou Wi-Fi).
 }
 
 // ---------- Construction
@@ -443,7 +451,9 @@ static void refreshLauncher() {
 
 static void launch(int index) {
   if (index < 0 || index >= radCount) return;
-  usbSerial.printf("o%d\n", index);
+  char msg[8];
+  snprintf(msg, sizeof msg, "o%d\n", index);
+  if (uiSendHook) uiSendHook(msg);
   uiLauncherClose();
   uiFlash(LV_SYMBOL_OK);
 }
@@ -747,25 +757,14 @@ void uiBegin() {
   lv_label_set_text(usbIcon, LV_SYMBOL_USB);
   lv_obj_align(usbIcon, LV_ALIGN_TOP_MID, 0, 16);
 
-  // Badge réunion en haut de l'écran, au-dessus de toutes les tuiles.
-  meetBadge = lv_obj_create(scr);
-  lv_obj_set_size(meetBadge, LV_SIZE_CONTENT, 22);
-  lv_obj_align(meetBadge, LV_ALIGN_TOP_MID, 0, 8);
-  lv_obj_set_style_radius(meetBadge, 11, 0);
-  lv_obj_set_style_bg_color(meetBadge, lv_color_hex(0x1A1D24), 0);
-  lv_obj_set_style_border_width(meetBadge, 0, 0);
-  lv_obj_set_style_pad_hor(meetBadge, 10, 0);
-  lv_obj_set_style_pad_ver(meetBadge, 0, 0);
-  lv_obj_set_style_pad_column(meetBadge, 6, 0);
-  lv_obj_set_flex_flow(meetBadge, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(meetBadge, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_clear_flag(meetBadge, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  meetDot = makeCircle(meetBadge, 8);
-  meetLabel = lv_label_create(meetBadge);
-  lv_obj_set_style_text_font(meetLabel, &lv_font_montserrat_14, 0);
-  lv_obj_set_style_text_color(meetLabel, lv_color_hex(COL_TEXT), 0);
-  lv_label_set_text(meetLabel, "");
+  // Réunion : texte courbe en haut de la tuile affichée, juste sous l'arc de couleur.
+  meetBadge = lv_canvas_create(scr);
+  meetBuf = (uint8_t *)heap_caps_calloc(240 * ARC_BAND_H, 3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (meetBuf) lv_canvas_set_buffer(meetBadge, meetBuf, 240, ARC_BAND_H, LV_IMG_CF_TRUE_COLOR_ALPHA);
+  lv_obj_set_pos(meetBadge, 0, 0);
+  lv_obj_clear_flag(meetBadge, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
+  meetFollowTile();  // posé sur la tuile affichée, pas par-dessus l'écran
 
   buildMediaPanel();  // sous le symbole géant, les alertes et les questions
 
@@ -1075,15 +1074,137 @@ void uiHistoryClose() {
 
 // ---------- Réunion
 
+// Texte courbe en haut de l'écran, lu de gauche à droite, juste sous l'arc de couleur.
+// LVGL 8.3 ne tourne pas les étiquettes ici (les lettres tournées disparaissent) : on dessine
+// nous-mêmes chaque glyphe tourné, pixel par pixel, dans une image transparente en PSRAM.
+#define ARC_TEXT_R 91   // rayon du milieu des lettres : juste sous l'arc de volume (bord intérieur à 98)
+#define ARC_DOT 8
+
+static void bandPut(int x, int y, uint16_t c, uint8_t a) {
+  if (x < 0 || x >= 240 || y < 0 || y >= ARC_BAND_H) return;
+  uint8_t *p = meetBuf + (y * 240 + x) * 3;
+  if (a <= p[2]) return;
+  p[0] = c & 0xFF;
+  p[1] = c >> 8;
+  p[2] = a;
+}
+
+// Alpha (0..255) d'un pixel d'un glyphe 4 bits par pixel, rangé en flux continu.
+static int glyphAlpha(const uint8_t *bmp, int w, int h, int x, int y) {
+  if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+  int i = y * w + x;
+  uint8_t b = bmp[i >> 1];
+  return ((i & 1) ? (b & 0x0F) : (b >> 4)) * 17;
+}
+
+// Dessine la lettre centrée en (cx, cy), tournée de ang radians (sens horaire).
+static void drawGlyphRotated(const lv_font_t *font, uint32_t letter, uint32_t next, float cx, float cy, float ang,
+                             uint16_t col) {
+  lv_font_glyph_dsc_t g;
+  if (!lv_font_get_glyph_dsc(font, &g, letter, next) || !g.box_w || !g.box_h || g.bpp != 4) return;
+  const uint8_t *bmp = lv_font_get_glyph_bitmap(font, letter);
+  if (!bmp) return;
+  int lh = lv_font_get_line_height(font);
+  // Boîte du glyphe dans la cellule de la lettre (comme lv_draw_letter), centre de la cellule.
+  float bx = g.ofs_x, by = (lh - font->base_line) - g.box_h - g.ofs_y;
+  float ccx = g.adv_w / 2.0f, ccy = lh / 2.0f;
+  float cs = cosf(ang), sn = sinf(ang);
+  for (int py = (int)(cy - lh); py <= (int)(cy + lh); py++) {
+    for (int px = (int)(cx - lh); px <= (int)(cx + lh); px++) {
+      // Écran -> cellule : rotation inverse autour du centre de la lettre.
+      float dx = px + 0.5f - cx, dy = py + 0.5f - cy;
+      float gx = dx * cs + dy * sn + ccx - bx - 0.5f, gy = -dx * sn + dy * cs + ccy - by - 0.5f;
+      int x0 = (int)floorf(gx), y0 = (int)floorf(gy);
+      float fx = gx - x0, fy = gy - y0;
+      float a = glyphAlpha(bmp, g.box_w, g.box_h, x0, y0) * (1 - fx) * (1 - fy) +
+                glyphAlpha(bmp, g.box_w, g.box_h, x0 + 1, y0) * fx * (1 - fy) +
+                glyphAlpha(bmp, g.box_w, g.box_h, x0, y0 + 1) * (1 - fx) * fy +
+                glyphAlpha(bmp, g.box_w, g.box_h, x0 + 1, y0 + 1) * fx * fy;
+      if (a >= 1) bandPut(px, py, col, a > 255 ? 255 : (uint8_t)a);
+    }
+  }
+}
+
+static void drawDot(float cx, float cy, float r, uint16_t col) {
+  for (int py = (int)(cy - r - 1); py <= (int)(cy + r + 1); py++)
+    for (int px = (int)(cx - r - 1); px <= (int)(cx + r + 1); px++) {
+      float d = hypotf(px + 0.5f - cx, py + 0.5f - cy), a = r - d + 0.5f;
+      if (a > 0) bandPut(px, py, col, a >= 1 ? 255 : (uint8_t)(a * 255));
+    }
+}
+
+static uint16_t to565(uint32_t rgb) {
+  return ((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x001F);
+}
+
+static void drawArcText(const char *text, uint32_t dotColor, uint32_t textColor) {
+  const lv_font_t *font = &lv_font_montserrat_14;
+  const float r = ARC_TEXT_R;
+  const int gap = 6, maxLen = (int)(r * 2.2f);
+  // Lettres et avances ; "..." si le texte dépasse l'ouverture maximale.
+  uint32_t letters[64];
+  int adv[64], n = 0, total = ARC_DOT + gap;
+  uint32_t i = 0;
+  while (text[i] && n < 60) {
+    uint32_t c = _lv_txt_encoded_next(text, &i);
+    uint32_t j = i;
+    uint32_t next = text[j] ? _lv_txt_encoded_next(text, &j) : 0;
+    int w = lv_font_get_glyph_width(font, c, next);
+    if (total + w > maxLen) {
+      int dot = lv_font_get_glyph_width(font, '.', '.');
+      while (n > 0 && total + 3 * dot > maxLen) total -= adv[--n];
+      for (int k = 0; k < 3; k++) {
+        letters[n] = '.';
+        adv[n++] = dot;
+      }
+      total += 3 * dot;
+      break;
+    }
+    letters[n] = c;
+    adv[n++] = w;
+    total += w;
+  }
+  memset(meetBuf, 0, 240 * ARC_BAND_H * 3);
+  // Angle courant (0 = midi, sens horaire) ; chaque élément est centré sur sa part de l'arc.
+  float a = -total / 2.0f / r;
+  auto center = [&](int w, float &cx, float &cy) {
+    float mid = a + w / 2.0f / r;
+    cx = 120 + r * sinf(mid);
+    cy = 120 - r * cosf(mid);
+    a += w / r;
+    return mid;
+  };
+  float cx, cy;
+  center(ARC_DOT, cx, cy);
+  drawDot(cx, cy, ARC_DOT / 2.0f, to565(dotColor));
+  a += gap / r;
+  uint16_t col = to565(textColor);
+  for (int k = 0; k < n; k++) {
+    float ang = center(adv[k], cx, cy);
+    if (letters[k] != ' ') drawGlyphRotated(font, letters[k], k + 1 < n ? letters[k + 1] : 0, cx, cy, ang, col);
+  }
+  lv_obj_invalidate(meetBadge);
+}
+
+// Le texte appartient à la tuile affichée : il glisse avec elle, puis réapparaît en fondu
+// sur la nouvelle tuile une fois le défilement terminé.
+static void meetFollowTile() {
+  lv_obj_t *t = tiles[uiTile()];
+  if (!meetBadge || lv_obj_get_parent(meetBadge) == t) return;
+  lv_obj_set_parent(meetBadge, t);
+  lv_obj_set_pos(meetBadge, 0, 0);
+  if (meetState) lv_obj_fade_in(meetBadge, 250, 0);
+}
+
 void uiSetMeeting(int state, const char *label) {
-  if (state == meetState && !strcmp(lv_label_get_text(meetLabel), label)) return;
+  if (state == meetState && !strcmp(meetText, label)) return;
   meetState = state;
-  if (!state) {
+  strlcpy(meetText, label, sizeof meetText);
+  if (!state || !meetBuf) {
     lv_obj_add_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
     return;
   }
-  lv_obj_set_style_bg_color(meetDot, lv_color_hex(state == 1 ? COL_MUTE : 0x3DDC84), 0);
-  lv_label_set_text(meetLabel, label);
+  drawArcText(label, state == 1 ? COL_MUTE : 0x3DDC84, COL_TEXT);
   lv_obj_clear_flag(meetBadge, LV_OBJ_FLAG_HIDDEN);
 }
 

@@ -559,7 +559,10 @@ class Companion:
         self.rx = b""
         self.wifi_status = None
         self.last_wifi_poll = 0
-        self.mirror_on = False  # renvoyé par push_mirror_state si l'éditeur regarde
+        # Miroir coupé par défaut (il a pu rester actif d'une liaison précédente) ;
+        # push_mirror_state le rallume si l'éditeur regarde.
+        self.mirror_on = False
+        self.send("s0\n")
         log.info("connecté (%s)", ser.port)
 
     def send(self, data):
@@ -1027,8 +1030,16 @@ class Companion:
                                  creationflags=subprocess.CREATE_NO_WINDOW)
             ok = res.returncode == 0
             if ok and wifi:
-                err = link.push_firmware(self.settings.get("wifi_ip"), self.settings.get("wifi_key"),
-                                         fw / ".pio" / "build" / "knob" / "firmware.bin")
+                for attempt in range(3):  # nouveaux essais si le Wi-Fi a flanché
+                    try:
+                        err = link.push_firmware(self.settings.get("wifi_ip"), self.settings.get("wifi_key"),
+                                                 fw / ".pio" / "build" / "knob" / "firmware.bin")
+                    except (OSError, ConnectionError, serial.SerialException) as e:
+                        err = str(e)
+                    if err is None:
+                        break
+                    log.info("firmware sans fil : échec (%s)%s", err, ", nouvel essai" if attempt < 2 else "")
+                    time.sleep(5)
                 ok = err is None
                 res.stdout += f"\nenvoi Wi-Fi : {err}"
             log.info("mise à jour du firmware : %s", "réussie" if ok else "ÉCHEC\n" + res.stdout[-1500:])

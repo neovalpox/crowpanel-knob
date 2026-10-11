@@ -132,7 +132,7 @@ class NetLink:
         answer = self._line(deadline)
         if not hmac.compare_digest(answer[1:], _proof(key, b"knob", mine)):
             raise ConnectionError("clé refusée (reconfigurer le Wi-Fi depuis l'USB)")
-        self.sock.settimeout(2)  # écritures : au-delà, la liaison est considérée perdue
+        self.sock.settimeout(5)  # écritures : au-delà, la liaison est considérée perdue
 
     def _fill(self, watch_silence=True):
         try:
@@ -182,14 +182,49 @@ class NetLink:
 
 
 def push_firmware(ip, key_hex, path, progress=None):
-    """Envoie un firmware au module par le Wi-Fi ; renvoie None si réussi, sinon la raison."""
+    """Envoie un firmware au module par le Wi-Fi ; renvoie None si réussi, sinon la raison.
+
+    Le module accuse réception tous les 16 Ko ("!a<octets>") : on garde au plus 32 Ko d'avance.
+    Un firmware plus ancien n'envoie pas d'accusés : on s'en rend compte vite et on envoie d'une traite.
+    """
     data = path.read_bytes()
     link = NetLink(ip, key_hex, timeout=4)
+    step, window = 16384, 2
+    acked, legacy, result = 0, False, {}
+
+    def read_acks(wait):
+        """Lit les réponses du module jusqu'à `wait` secondes ; met à jour acked / result."""
+        nonlocal acked
+        end = time.monotonic() + wait
+        while True:
+            line = link.readline(max(0.0, end - time.monotonic()))
+            if line is None:
+                return
+            if line.startswith("!a"):
+                acked = max(acked, int(line[2:] or 0))
+                return
+            if line.startswith(("!ok", "!err")):
+                result["line"] = line
+                return
+
     try:
         link.sock.settimeout(60)  # effacements de flash côté module : le Wi-Fi y marque des pauses
         link.write(f"!{len(data)}\t{hashlib.md5(data).hexdigest()}\n".encode())
-        step, shown = 16384, -10
+        shown = -10
         for i in range(0, len(data), step):
+            # Attend que le bloc d'il y a `window` blocs soit accusé.
+            need = i - (window - 1) * step
+            t0 = time.monotonic()
+            while not legacy and need > 0 and acked < need and "line" not in result:
+                if acked == 0 and time.monotonic() - t0 > 3:
+                    legacy = True  # aucun accusé : ancien firmware
+                    log.info("firmware sans fil : module sans accusés, envoi d'une traite")
+                    break
+                if time.monotonic() - t0 > 30:
+                    return f"le module ne répond plus à {i * 100 // len(data)} %"
+                read_acks(0.5)
+            if "line" in result:
+                break
             try:
                 link.write(data[i:i + step])
             except serial.SerialException as e:
@@ -200,20 +235,18 @@ def push_firmware(ip, key_hex, path, progress=None):
                 log.info("firmware sans fil : %d %%", pct)
             if progress:
                 progress(pct)
-        link.last_rx = end = time.monotonic()  # module occupé à écrire : pas de "p" pendant l'envoi
-        end += 30
-        while time.monotonic() < end:
+        end = time.monotonic() + 30
+        while "line" not in result and time.monotonic() < end:
             try:
-                line = link.readline(end - time.monotonic())
+                read_acks(end - time.monotonic())
             except serial.SerialException:
                 # Tout est parti et le module a coupé sans "!err" : il redémarre sur le nouveau firmware.
                 return None
-            if line is None:
-                break
-            if line.startswith("!ok"):
-                return None
-            if line.startswith("!err"):
-                return line[5:] or "erreur"
+        line = result.get("line", "")
+        if line.startswith("!ok"):
+            return None
+        if line.startswith("!err"):
+            return line[5:] or "erreur"
         return "pas de réponse du module"
     finally:
         link.close()

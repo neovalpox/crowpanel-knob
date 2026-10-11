@@ -388,6 +388,8 @@ static void pollLink() {
     // Nouveau compagnon en Wi-Fi : il devient la liaison des réponses.
     gen = netGeneration();
     netLine.len = 0;
+    mirrorOn = false;  // le nouveau compagnon le redemandera si son éditeur est ouvert
+    hwMirrorEnable(false);
     out = nc;
     outNet = true;
     lastRx = millis();
@@ -419,7 +421,9 @@ static void sendMirror() {
   static uint8_t *pack = nullptr;  // pire cas : tout en pixels bruts + un octet par bloc de 128
   if (!mirrorOn || !synced || !hwMirror || hwMirrorX1 > hwMirrorX2) return;
   if (!pack && !(pack = bigAlloc(240 * 240 * 2 + 240 * 240 / 128 + 16))) return;
-  if (millis() - last < (outNet ? 200UL : 120UL)) return;
+  // Cadence adaptée : si l'envoi précédent a bloqué (Wi-Fi encombré), on espace les images.
+  static unsigned long interval = 120;
+  if (millis() - last < interval) return;
   last = millis();
   int x1 = hwMirrorX1, y1 = hwMirrorY1, x2 = hwMirrorX2, y2 = hwMirrorY2;
   hwMirrorX1 = 1;
@@ -453,7 +457,10 @@ static void sendMirror() {
     }
   }
   out->printf("s%d %d %d %d %d\n", x1, y1, w, h, len);
+  unsigned long t0 = millis();
   out->write(pack, len);
+  unsigned long took = millis() - t0, base = outNet ? 200 : 120;
+  interval = took > 150 ? min(2000UL, interval * 2) : max(base, interval - interval / 4);
 }
 
 // Touches multimédia : en Wi-Fi, c'est le PC qui les appuie (pas d'USB HID vers lui).
@@ -476,6 +483,9 @@ static void receiveFirmware(int size, const char *md5) {
     int n = min((int)sizeof chunk, size - done);
     if (!readExact(chunk, n, 30000) || Update.write(chunk, n) != (size_t)n) break;
     done += n;
+    // Accusé tous les 16 Ko : le PC n'envoie jamais plus de 32 Ko d'avance (pas de file
+    // d'attente qui déborde pendant les effacements de flash, où le Wi-Fi marque des pauses).
+    if (done % 16384 == 0 || done == size) out->printf("!a%d\n", done);
     int pct = (long long)done * 100 / size;
     if (pct != shown) {
       shown = pct;
@@ -603,6 +613,9 @@ void setup() {
   uiBegin();
   uiSetSynced(false);
   hwMediaKeyHook = mediaKeyOverNet;
+  uiSendHook = [](const char *msg) {
+    if (synced) out->print(msg);
+  };
   netBegin();
   if (netConfigured()) uiSetLinkSymbol(LV_SYMBOL_WIFI);
 }
@@ -634,5 +647,11 @@ void loop() {
   lv_timer_handler();
   reportPerf(millis() - t0);
   sendMirror();
+  // Tuile affichée : signalée au PC sur la liaison active (glissement ou retour automatique).
+  static int lastTile = -1;
+  if (synced && (int)uiTile() != lastTile) {
+    lastTile = uiTile();
+    out->printf("Q%d\n", lastTile);
+  }
   delay(2);
 }

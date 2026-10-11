@@ -64,6 +64,9 @@ static void startWifi() {
   WiFi.setHostname("crowpanel-knob");
   WiFi.setSleep(false);  // latence de la molette avant la consommation (le module est alimenté)
   WiFi.setAutoReconnect(true);
+  // Plusieurs points d'accès pour le même réseau : on prend le plus fort, pas le premier trouvé.
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.begin(ssid.c_str(), pass.c_str());
   if (!started) {
     server.begin();

@@ -11,6 +11,8 @@ enum AppMode { MODE_MASTER, MODE_APPVOL, MODE_SCROLL, MODE_MEDIA, MODE_PROGRESS 
 enum Tile { TILE_APP, TILE_VOL, TILE_DASH, TILE_NET, TILE_SYS, TILE_HUE };
 
 void uiBegin();
+// Envoi d'une ligne au PC sur la liaison active (USB ou Wi-Fi), fourni par main.cpp.
+extern void (*uiSendHook)(const char *line);
 void uiTick();  // LEDs, horloge, veille, alertes, retour auto sur la tuile application
 
 void uiSetSynced(bool synced);
